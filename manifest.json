@@ -1,0 +1,210 @@
+{
+  "manifest_version": 3,
+  "name": "Universal PiP",
+  "version": "1.0",
+  "description": "PiP (Picture-in-picture) and volume control.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/iconpip_black16.png",
+      "48": "icons/iconpip_black48.png",
+      "128": "icons/iconpip_black128.png"
+    }
+  },
+  "commands": {
+    "hide_ui": {
+      "suggested_key": {
+        "default": "Alt+Period",
+        "mac": "Alt+Period"
+      },
+      "description": "Hide Extension UI"
+    },
+    "show_ui": {
+      "suggested_key": {
+        "default": "Alt+Comma",
+        "mac": "Alt+Comma"
+      },
+      "description": "Show Extension UI"
+    },
+    "focus_pip": {
+      "suggested_key": {
+        "default": "Alt+F",
+        "mac": "Alt+F"
+      },
+      "description": "Bring PiP Window to Front"
+    },
+    "close_pip": {
+      "suggested_key": {
+        "default": "Alt+Shift+F",
+        "mac": "Alt+Shift+F"
+      },
+      "description": "Close PiP Window"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "utils/logger.js",
+        "ui-visibility-listener.js",
+        "pips/pip-floating-button.js",
+        "pips/pip-selector-logic.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "volume-panel/volume-panel-ui.js",
+        "volume-panel/volume-panel-layout.js",
+        "volume-panel/volume-panel.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.tiktok.com/*"
+      ],
+      "js": [
+        "platforms/tiktok/tiktok-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://m.youtube.com/*"
+      ],
+      "js": [
+        "platforms/youtube/youtube-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.twitch.tv/*"
+      ],
+      "js": [
+        "platforms/twitch/twitch-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://play.hbomax.com/*",
+        "https://play.max.com/*",
+        "https://*.max.com/*",
+        "https://*.hbomax.com/*"
+      ],
+      "js": [
+        "platforms/hbo/hbo-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.disneyplus.com/*"
+      ],
+      "js": [
+        "platforms/disney/disney-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.netflix.com/*",
+        "https://netflix.com/*"
+      ],
+      "js": [
+        "platforms/netflix/netflix-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.primevideo.com/*"
+      ],
+      "js": [
+        "platforms/primevideo/primevideo-inject.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.instagram.com/*"
+      ],
+      "js": [
+        "platforms/instagram/instagram-inject.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "bridge-utils.js",
+        "platforms/youtube/youtube-api-bridge.js"
+      ],
+      "matches": [
+        "*://*.youtube.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "platforms/netflix/netflix-api-bridge.js"
+      ],
+      "matches": [
+        "*://*.netflix.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "bridge-utils.js",
+        "platforms/tiktok/tiktok-api-bridge.js"
+      ],
+      "matches": [
+        "*://*.tiktok.com/*"
+      ]
+    },
+    {
+      "resources": [
+        "platforms/twitch/twitch-api-bridge.js"
+      ],
+      "matches": [
+        "*://*.twitch.tv/*"
+      ]
+    },
+    {
+      "resources": [
+        "bridge-utils.js",
+        "platforms/instagram/instagram-api-bridge.js"
+      ],
+      "matches": [
+        "*://*.instagram.com/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/iconpip_black16.png",
+    "48": "icons/iconpip_black48.png",
+    "128": "icons/iconpip_black128.png"
+  }
+}
