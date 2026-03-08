@@ -95,10 +95,11 @@
             const isOriginHidden = state.originDomain && state.domainExceptions && state.domainExceptions[state.originDomain] === false;
 
             if (isGlobalHidden || isOriginHidden) {
-                hideEverything();
+                destroyUI();
                 return resp({ success: true, ignored: true, reason: 'origin_hidden' });
             }
 
+            STATE._destroyed = false;
             showToggleButton(state);
             resp({ success: true });
         },
@@ -108,7 +109,7 @@
         },
 
         HIDE_VOLUME_PANEL: (msg, resp) => {
-            hideEverything();
+            destroyUI();
             resp({ success: true });
         },
 
@@ -258,7 +259,7 @@
     }
 
     // Expose cleanup globally for re-injection defense
-    window._pipHideEverything = hideEverything;
+    window._pipHideEverything = selfDestruct;
 
     function createToggleButton() {
         if (STATE.toggleButton) return STATE.toggleButton;
@@ -396,7 +397,8 @@
         });
         STATE.controlPanel.appendChild(muteBtn);
 
-        if (!STATE.isSelectorMode && !STATE.isLive) {
+        const isTikTokLive = !!STATE.pipState?.isTikTokLive;
+        if (!STATE.isSelectorMode && (!isTikTokLive && !STATE.isLive)) {
             STATE.controlPanel.appendChild(window.PiPVolumePanelUI.createSeparator(targetDoc));
             const seekFeedback = window.PiPVolumePanelUI.buildHUD(targetDoc);
             seekFeedback.id = "pipSeekFeedback";
@@ -455,6 +457,7 @@
     }
 
     function showToggleButton(state = {}) {
+        STATE._destroyed = false;
         STATE.pipState = state;
         STATE.isPipActive = true;
         if (!STATE.toggleButton && !createToggleButton()) {
@@ -627,7 +630,7 @@
                     UTILS.sendMsg({ type: 'TOGGLE_PLAYBACK', playing: isPlaying });
                 });
 
-                if (isTikTokLive) {
+                if (isTikTokLive || state.platform === 'twitch') {
                     navUi.prevBtn.remove();
                     navUi.nextBtn?.remove();
                 }
@@ -710,7 +713,7 @@
         requestAnimationFrame(() => { STATE.controlPanel.style.visibility = 'hidden'; });
     }
 
-    function hideEverything() {
+    function destroyUI() {
         STATE._destroyed = true;
         STATE.isPipActive = false;
         STATE.isPanelVisible = false;
@@ -742,6 +745,11 @@
         const injectedStyle = targetDoc.getElementById("globalPipSliderStyle");
         if (injectedStyle) injectedStyle.remove();
 
+        STATE.pendingState = null;
+    }
+
+    function selfDestruct() {
+        destroyUI();
         if (window._pipMsgHandler && _runtime && _runtime.onMessage) {
             try { _runtime.onMessage.removeListener(_onRuntimeMessage); } catch (e) { }
         }
@@ -749,7 +757,6 @@
         window._pipMsgHandler = null;
         window.__PIP_PANEL_LOADED__ = false;
         window.__pipPanelRegistered__ = false;
-        STATE.pendingState = null;
     }
 
     function cleanupNavSyncListeners() {

@@ -921,8 +921,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 try {
                     const state = await getPipState();
                     const senderTabId = sender.tab?.id;
-                    if (!state.active || !senderTabId || senderTabId === state.tabId) {
-                        // Not active, or this IS the origin tab — skip
+                    if (!state.active) {
+                        // Cleanup: explicitly hide PiP if BfCache restored a stale DOM
+                        if (senderTabId) safeSendMessage(senderTabId, { type: 'HIDE_VOLUME_PANEL' });
+                        sendResponse({ skipped: true });
+                        return;
+                    }
+                    if (!senderTabId || senderTabId === state.tabId) {
+                        // This IS the origin tab — skip
                         sendResponse({ skipped: true });
                         return;
                     }
@@ -984,6 +990,9 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
             if (success) {
                 setTimeout(() => showControlPanel(tab.id), 200);
             }
+        } else {
+            // Lazy Cleanup: If PiP is off, ensure orphaned panels in background tabs are hidden
+            safeSendMessage(tab.id, { type: 'HIDE_VOLUME_PANEL' });
         }
     } catch (e) { }
 });
