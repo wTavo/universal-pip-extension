@@ -187,6 +187,7 @@
     },
     {
       "resources": [
+        "bridge-utils.js",
         "platforms/twitch/twitch-api-bridge.js"
       ],
       "matches": [
