@@ -36,6 +36,9 @@ const log = PiPLogger.create('BG');
 // Track last sent panel shows to prevent spam/redundancy
 const lastPanelShow = new Map(); // tabId -> timestamp
 
+// Suppresses bridge feedback loop during slider drag (prevents log spam)
+let _volumeDragActive = false;
+
 // Helper para guardar estado
 async function savePipState(newState) {
     // serialize writes to prevent lost updates
@@ -662,6 +665,7 @@ async function handlePipDeactivated(message, sender, sendResponse) {
 }
 
 async function handleSetVolume(message, sender, sendResponse) {
+    _volumeDragActive = false; // Drag ended — allow bridge feedback again
     const newVolume = message.volume;
     const stateUpdate = { volume: newVolume };
 
@@ -749,6 +753,12 @@ async function handleUpdateAdState(message, sender, sendResponse) {
 
 async function handleUpdateVolumeState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
+        // Skip save during active slider drag to prevent feedback loop log spam
+        if (_volumeDragActive) {
+            sendResponse({ success: true });
+            return;
+        }
+
         const newState = {};
         if (message.volume !== undefined) newState.volume = message.volume;
         if (message.muted !== undefined) newState.muted = message.muted;
@@ -882,6 +892,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         case 'SET_VOLUME':
             handleSetVolume(message, sender, sendResponse);
             return true;
+
+        case 'SET_VOLUME_LIVE':
+            // Lightweight real-time relay during slider drag — no save, no log
+            _volumeDragActive = true;
+            if (pipState.tabId) {
+                safeSendMessage(pipState.tabId, { type: 'CHANGE_VOLUME', volume: message.volume });
+            }
+            // Silent in-memory update only
+            pipState.volume = message.volume;
+            if (message.volume > 0 && pipState.muted) pipState.muted = false;
+            sendResponse({ success: true });
+            return false;
 
         case 'TOGGLE_PLAY':
             handleTogglePlay(message, sender, sendResponse);

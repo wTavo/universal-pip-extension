@@ -32,6 +32,7 @@
         pipState: {}, // Local cache of global PiP state
         isSelectorMode: false,
         isLive: false,
+        isHovering: false,
         pendingState: null,
         pipUtilsRetryInterval: null,
         _panelDims: null,
@@ -336,32 +337,41 @@
         STATE.controlPanel.setAttribute('data-original-display', 'flex');
 
         const stop = () => window.PiPVolumePanelLayout.stopAutoHide();
-        const start = () => window.PiPVolumePanelLayout.startAutoHide(hidePanel);
+        const start = () => { if (!STATE.isHovering) window.PiPVolumePanelLayout.startAutoHide(hidePanel); };
 
-        STATE.controlPanel.addEventListener('mouseenter', stop);
-        STATE.controlPanel.addEventListener('mouseleave', start);
-        STATE.controlPanel.addEventListener('mousemove', start);
-        STATE.controlPanel.addEventListener('click', start);
+        STATE.controlPanel.addEventListener('mouseenter', () => { STATE.isHovering = true; stop(); });
+        STATE.controlPanel.addEventListener('mouseleave', () => { STATE.isHovering = false; start(); });
 
         const volGroup = window.PiPVolumePanelUI.buildVolumeGroup(targetDoc);
         const { volumeContainer, volumeSlider: slider, muteBtn } = volGroup;
         STATE.slider = slider; // Cache DOM reference
 
-        if ('ontouchstart' in window) slider.style.touchAction = 'none';
+        // Throttle for real-time volume relay during drag (no save/log, just audio feedback)
+        let _volThrottleTimer = null;
+        let _pendingVolume = null;
 
         slider.addEventListener('input', () => {
             if (STATE.isProgrammaticVolumeUpdate) return;
             const volume = parseFloat(slider.value);
             slider.setAttribute('aria-valuenow', volume);
-            if (Math.abs(volume - STATE.lastVolumeSent) >= 1) {
-                UTILS.sendMsg({ type: "SET_VOLUME", volume });
-                STATE.lastVolumeSent = volume;
-            }
+
             if (volume > 0 && STATE.currentMuteState) {
                 STATE.currentMuteState = false;
                 STATE._ignoreMuteResetUntil = Date.now() + 600;
             }
             updateMuteButton(STATE.currentMuteState, volume);
+
+            // Throttled live relay: updates audio in real-time, max once every 100ms
+            _pendingVolume = volume;
+            if (!_volThrottleTimer) {
+                _volThrottleTimer = setTimeout(() => {
+                    if (_pendingVolume !== null) {
+                        UTILS.sendMsg({ type: 'SET_VOLUME_LIVE', volume: _pendingVolume });
+                        _pendingVolume = null;
+                    }
+                    _volThrottleTimer = null;
+                }, 100);
+            }
             start();
         });
 
@@ -384,7 +394,21 @@
         slider.addEventListener('pointerdown', () => { STATE.isUserDraggingVolume = true; stop(); });
         slider.addEventListener('pointerup', () => { STATE.isUserDraggingVolume = false; start(); });
         slider.addEventListener('pointercancel', () => { STATE.isUserDraggingVolume = false; start(); });
-        slider.addEventListener('change', () => { STATE.isUserDraggingVolume = false; start(); });
+        slider.addEventListener('change', () => {
+            STATE.isUserDraggingVolume = false;
+            // Cancel any pending throttled live relay
+            if (_volThrottleTimer) { clearTimeout(_volThrottleTimer); _volThrottleTimer = null; }
+            _pendingVolume = null;
+
+            if (!STATE.isProgrammaticVolumeUpdate) {
+                const volume = parseFloat(slider.value);
+                if (Math.abs(volume - STATE.lastVolumeSent) >= 1) {
+                    UTILS.sendMsg({ type: "SET_VOLUME", volume });
+                    STATE.lastVolumeSent = volume;
+                }
+            }
+            start();
+        });
 
         STATE.controlPanel.appendChild(volumeContainer);
         STATE.controlPanel.appendChild(window.PiPVolumePanelUI.createSeparator(targetDoc));
@@ -468,9 +492,15 @@
         const hasVolume = typeof state.volume === 'number';
         const isMuted = Boolean(state.muted);
         if (STATE.slider && hasVolume) {
-            STATE.slider.value = state.volume;
-            STATE.slider.setAttribute('aria-valuenow', state.volume);
-            STATE.lastVolumeSent = Number(state.volume);
+            if (isMuted && state.volume > 0) STATE.preMuteVolume = state.volume;
+            const displayVolume = isMuted ? 0 : state.volume;
+
+            STATE.isProgrammaticVolumeUpdate = true;
+            STATE.slider.value = displayVolume;
+            STATE.slider.setAttribute('aria-valuenow', displayVolume);
+            STATE.isProgrammaticVolumeUpdate = false;
+
+            STATE.lastVolumeSent = Number(displayVolume);
         }
         STATE.currentMuteState = isMuted;
         updateMuteButton(isMuted, hasVolume ? state.volume : 100);
@@ -675,6 +705,9 @@
 
     function showPanel() {
         if (!STATE.controlPanel) createControlPanel();
+        STATE.isPanelVisible = true;
+        if (STATE.toggleButton) STATE.toggleButton.setAttribute('aria-expanded', 'true');
+
         Object.assign(STATE.controlPanel.style, { opacity: '0', display: 'flex', visibility: 'visible', pointerEvents: 'none', transition: 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)' });
         window.PiPVolumePanelLayout.startAutoHide(hidePanel);
 
@@ -685,9 +718,12 @@
             if (!res?.state) return;
             const { volume, muted } = res.state;
             if (typeof volume === "number" && STATE.slider) {
+                if (muted && volume > 0) STATE.preMuteVolume = volume;
+                const displayVolume = muted ? 0 : volume;
+
                 STATE.isProgrammaticVolumeUpdate = true;
-                STATE.slider.value = volume;
-                STATE.slider.setAttribute('aria-valuenow', volume);
+                STATE.slider.value = displayVolume;
+                STATE.slider.setAttribute('aria-valuenow', displayVolume);
                 STATE.isProgrammaticVolumeUpdate = false;
             }
             if (typeof muted === "boolean") { STATE.currentMuteState = muted; updateMuteButton(muted, typeof volume === "number" ? volume : 100); }

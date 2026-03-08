@@ -18,7 +18,7 @@
 
         startAutoHide: (onHide) => {
             if (STATE.autoHideTimer) clearTimeout(STATE.autoHideTimer);
-            STATE.autoHideTimer = setTimeout(onHide, 5000);
+            STATE.autoHideTimer = setTimeout(onHide, 3000);
         },
 
         stopAutoHide: () => {
