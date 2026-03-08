@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async function updateStorageSize() {
         const size = await PiPLogger.getStorageSize();
-        storageSizeLabel.textContent = formatBytes(size) + ' used';
+        storageSizeLabel.textContent = chrome.i18n.getMessage("bytesUsed", formatBytes(size));
     }
 
     clearStorageBtn.addEventListener('click', async () => {
@@ -180,10 +180,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response && response.uiVisible !== undefined) {
                     if (response.uiVisible) {
                         globalBadge.classList.remove('hidden');
-                        globalBadge.querySelector('.status-value').textContent = 'Visible';
+                        globalBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusVisible");
                     } else {
                         globalBadge.classList.add('hidden');
-                        globalBadge.querySelector('.status-value').textContent = 'Hidden';
+                        globalBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusHidden");
                     }
                 }
             });
@@ -192,17 +192,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 chrome.tabs.sendMessage(tab.id, { type: 'GET_UI_VISIBILITY' }, (response) => {
                     if (chrome.runtime.lastError) {
                         currentBadge.classList.remove('hidden');
-                        currentBadge.querySelector('.status-value').textContent = 'N/A';
+                        currentBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusNA");
                         return;
                     }
 
                     if (response && response.visible !== undefined) {
                         if (response.visible) {
                             currentBadge.classList.remove('hidden');
-                            currentBadge.querySelector('.status-value').textContent = 'Visible';
+                            currentBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusVisible");
                         } else {
                             currentBadge.classList.add('hidden');
-                            currentBadge.querySelector('.status-value').textContent = 'Hidden';
+                            currentBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusHidden");
                         }
                     }
                 });

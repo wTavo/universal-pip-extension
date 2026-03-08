@@ -431,13 +431,16 @@
         },
 
         createFloatingButton: function (options) {
-            const { id, text, onClick, style = {}, storageKey, disablePipUiAttribute, persist = true } = options;
+            const { id, text, title, onClick, style = {}, storageKey, disablePipUiAttribute, persist = true } = options;
 
             const existing = document.getElementById(id);
             if (existing) return existing;
 
             const btn = document.createElement("button");
             btn.id = id;
+            if (title) {
+                btn.title = title;
+            }
             if (!disablePipUiAttribute) {
                 btn.setAttribute('data-pip-ui', 'true');
             }

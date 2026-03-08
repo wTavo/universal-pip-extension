@@ -1,0 +1,157 @@
+{
+    "extName": {
+        "message": "Universal PiP"
+    },
+    "extDesc": {
+        "message": "PiP (Picture-in-picture) and volume control."
+    },
+    "cmdHideUiDesc": {
+        "message": "Hide Extension UI"
+    },
+    "cmdShowUiDesc": {
+        "message": "Show Extension UI"
+    },
+    "cmdFocusPipDesc": {
+        "message": "Bring PiP Window to Front"
+    },
+    "cmdClosePipDesc": {
+        "message": "Close PiP Window"
+    },
+    "popupTitle": {
+        "message": "Universal PiP"
+    },
+    "popupSettingsBtnTitle": {
+        "message": "Settings"
+    },
+    "popupSubtitle": {
+        "message": "Picture-in-Picture Control"
+    },
+    "popupShortcutsLabel": {
+        "message": "Keyboard Shortcuts"
+    },
+    "popupScopeAllPages": {
+        "message": "All pages"
+    },
+    "popupGlobalStatus": {
+        "message": "Global: "
+    },
+    "popupCurrentStatus": {
+        "message": "Current: "
+    },
+    "statusVisible": {
+        "message": "Visible"
+    },
+    "statusHidden": {
+        "message": "Hidden"
+    },
+    "statusNA": {
+        "message": "N/A"
+    },
+    "popupHideUiTitle": {
+        "message": "Hide Interface"
+    },
+    "popupHideUiDesc": {
+        "message": "Hides all extension UI"
+    },
+    "popupShowUiTitle": {
+        "message": "Show Interface"
+    },
+    "popupShowUiDesc": {
+        "message": "Restores the UI"
+    },
+    "popupFocusPipTitle": {
+        "message": "Bring PiP to Front"
+    },
+    "popupFocusPipDesc": {
+        "message": "Focus hidden PiP window"
+    },
+    "popupClosePipTitle": {
+        "message": "Close PiP Window"
+    },
+    "popupClosePipDesc": {
+        "message": "Exit Picture-in-Picture"
+    },
+    "modalSettingsTitle": {
+        "message": "Settings"
+    },
+    "modalDebugModeLabel": {
+        "message": "Debug Mode"
+    },
+    "modalDebugModeDesc": {
+        "message": "Show logs in browser console"
+    },
+    "modalErrorLogsLabel": {
+        "message": "Error Logs"
+    },
+    "modalClearLogsBtnTitle": {
+        "message": "Clear stored logs"
+    },
+    "modalReportTitle": {
+        "message": "Diagnostic Report"
+    },
+    "modalReportDesc1": {
+        "message": "This will generate a <strong>.txt</strong> file with technical information about the extension's state, including version, browser info, and debug logs if enabled."
+    },
+    "modalReportDesc2": {
+        "message": "No personal data, URLs, or browsing history is included. Share this report with the developer to help diagnose issues."
+    },
+    "modalGenerateReportBtn": {
+        "message": "Generate Report"
+    },
+    "footerReportBtnTitle": {
+        "message": "Diagnostic Report"
+    },
+    "bytesUsed": {
+        "message": "$1 used",
+        "placeholders": {
+            "1": {
+                "content": "$1"
+            }
+        }
+    },
+    "pipToggleBtnTitle": {
+        "message": "Show/Hide volume controls"
+    },
+    "pipToggleBtnBasicTitle": {
+        "message": "Show/Hide volume controls (Basic Mode)"
+    },
+    "pipMuteBtnTitle": {
+        "message": "Mute/Unmute"
+    },
+    "pipVolumeSliderAria": {
+        "message": "Volume"
+    },
+    "pipNavHideBtnTitle": {
+        "message": "Hide buttons"
+    },
+    "pipNavShowBtnTitle": {
+        "message": "Show buttons"
+    },
+    "pipNavPrevVideoTitle": {
+        "message": "Previous Video"
+    },
+    "pipNavPauseTitle": {
+        "message": "Pause"
+    },
+    "pipNavPlayTitle": {
+        "message": "Play"
+    },
+    "pipNavNextVideoTitle": {
+        "message": "Next Video"
+    },
+    "pipNavLikeTitle": {
+        "message": "Like"
+    },
+    "pipNavFavTitle": {
+        "message": "Favorite"
+    },
+    "pipSelectorTitle": {
+        "message": "Select specific video"
+    },
+    "pipBtnTitle": {
+        "message": "Select video for PiP"
+    },
+    "pipBtnExitTitle": {
+        "message": "Exit PiP"
+    }
+}

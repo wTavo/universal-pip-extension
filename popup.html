@@ -16,7 +16,8 @@
                     <div class="icon-orb">📺</div>
                     <h1>Universal PiP</h1>
                 </div>
-                <button id="settings-toggle-btn" class="settings-btn" title="Settings">
+                <button id="settings-toggle-btn" class="settings-btn" title="Settings"
+                    data-i18n-title="popupSettingsBtnTitle">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                         stroke-linecap="round" stroke-linejoin="round">
                         <circle cx="12" cy="12" r="3"></circle>
@@ -26,35 +27,37 @@
                     </svg>
                 </button>
             </div>
-            <p class="subtitle">Picture-in-Picture Control</p>
+            <p class="subtitle" data-i18n="popupSubtitle">Picture-in-Picture Control</p>
         </header>
 
         <div class="commands-section">
-            <div class="section-label">Keyboard Shortcuts</div>
+            <div class="section-label" data-i18n="popupShortcutsLabel">Keyboard Shortcuts</div>
 
             <div class="scope-toggle-wrapper">
                 <label class="scope-toggle-label">
                     <input type="checkbox" id="hide-scope-toggle" class="scope-toggle-input">
                     <span class="scope-toggle-slider"></span>
-                    <span class="scope-toggle-text">All pages</span>
+                    <span class="scope-toggle-text" data-i18n="popupScopeAllPages">All pages</span>
                 </label>
             </div>
 
             <div class="status-indicators">
                 <div class="status-badge" id="global-status">
                     <span class="status-dot"></span>
-                    <span class="status-text">Global: <span class="status-value">Visible</span></span>
+                    <span class="status-text"><span data-i18n="popupGlobalStatus">Global: </span><span
+                            class="status-value">Visible</span></span>
                 </div>
                 <div class="status-badge" id="current-status">
                     <span class="status-dot"></span>
-                    <span class="status-text">Current: <span class="status-value">Visible</span></span>
+                    <span class="status-text"><span data-i18n="popupCurrentStatus">Current: </span><span
+                            class="status-value">Visible</span></span>
                 </div>
             </div>
 
             <div class="command-card ui-control" data-command="hide_ui">
                 <div class="cmd-info">
-                    <span class="cmd-title">Hide Interface</span>
-                    <span class="cmd-desc">Hides all extension UI</span>
+                    <span class="cmd-title" data-i18n="popupHideUiTitle">Hide Interface</span>
+                    <span class="cmd-desc" data-i18n="popupHideUiDesc">Hides all extension UI</span>
                 </div>
                 <div class="kbd-stack">
                     <kbd>Alt</kbd>
@@ -65,8 +68,8 @@
 
             <div class="command-card ui-control" data-command="show_ui">
                 <div class="cmd-info">
-                    <span class="cmd-title">Show Interface</span>
-                    <span class="cmd-desc">Restores the UI</span>
+                    <span class="cmd-title" data-i18n="popupShowUiTitle">Show Interface</span>
+                    <span class="cmd-desc" data-i18n="popupShowUiDesc">Restores the UI</span>
                 </div>
                 <div class="kbd-stack">
                     <kbd>Alt</kbd>
@@ -79,8 +82,8 @@
 
             <div class="command-card" data-command="focus_pip">
                 <div class="cmd-info">
-                    <span class="cmd-title">Bring PiP to Front</span>
-                    <span class="cmd-desc">Focus hidden PiP window</span>
+                    <span class="cmd-title" data-i18n="popupFocusPipTitle">Bring PiP to Front</span>
+                    <span class="cmd-desc" data-i18n="popupFocusPipDesc">Focus hidden PiP window</span>
                 </div>
                 <div class="kbd-stack">
                     <kbd>Alt</kbd>
@@ -91,8 +94,8 @@
 
             <div class="command-card" data-command="close_pip">
                 <div class="cmd-info">
-                    <span class="cmd-title">Close PiP Window</span>
-                    <span class="cmd-desc">Exit Picture-in-Picture</span>
+                    <span class="cmd-title" data-i18n="popupClosePipTitle">Close PiP Window</span>
+                    <span class="cmd-desc" data-i18n="popupClosePipDesc">Exit Picture-in-Picture</span>
                 </div>
                 <div class="kbd-stack">
                     <kbd>Alt</kbd>
@@ -109,11 +112,12 @@
             <div id="modal-content" class="modal-content">
                 <!-- Settings View -->
                 <div id="modal-view-settings" class="modal-view" style="display: none;">
-                    <div class="modal-title">Settings</div>
+                    <div class="modal-title" data-i18n="modalSettingsTitle">Settings</div>
                     <div class="setting-row">
                         <div class="setting-info">
-                            <span class="setting-label">Debug Mode</span>
-                            <span class="setting-desc">Show logs in browser console</span>
+                            <span class="setting-label" data-i18n="modalDebugModeLabel">Debug Mode</span>
+                            <span class="setting-desc" data-i18n="modalDebugModeDesc">Show logs in browser
+                                console</span>
                         </div>
                         <label class="scope-toggle-label compact">
                             <input type="checkbox" id="debug-mode-toggle" class="scope-toggle-input">
@@ -122,10 +126,11 @@
                     </div>
                     <div class="setting-row storage-row">
                         <div class="setting-info">
-                            <span class="setting-label">Error Logs</span>
+                            <span class="setting-label" data-i18n="modalErrorLogsLabel">Error Logs</span>
                             <span class="setting-desc" id="storage-size-label">0 B used</span>
                         </div>
-                        <button id="clear-storage-btn" class="clear-btn" title="Clear stored logs">
+                        <button id="clear-storage-btn" class="clear-btn" title="Clear stored logs"
+                            data-i18n-title="modalClearLogsBtnTitle">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <polyline points="3 6 5 6 21 6"></polyline>
@@ -139,12 +144,12 @@
 
                 <!-- Report View -->
                 <div id="modal-view-report" class="modal-view" style="display: none;">
-                    <div class="modal-title">Diagnostic Report</div>
-                    <p class="modal-text">
+                    <div class="modal-title" data-i18n="modalReportTitle">Diagnostic Report</div>
+                    <p class="modal-text" data-i18n="modalReportDesc1" data-i18n-html="true">
                         This will generate a <strong>.txt</strong> file with technical information about the extension's
                         state, including version, browser info, and debug logs if enabled.
                     </p>
-                    <p class="modal-text muted">
+                    <p class="modal-text muted" data-i18n="modalReportDesc2">
                         No personal data, URLs, or browsing history is included. Share this report with the developer to
                         help diagnose issues.
                     </p>
@@ -155,7 +160,7 @@
                             <polyline points="7 10 12 15 17 10"></polyline>
                             <line x1="12" y1="15" x2="12" y2="3"></line>
                         </svg>
-                        Generate Report
+                        <span data-i18n="modalGenerateReportBtn">Generate Report</span>
                     </button>
                 </div>
             </div>
@@ -165,7 +170,8 @@
 
         <footer>
             <div class="footer-version">v1.0</div>
-            <button id="open-report-btn" class="report-icon-btn" title="Diagnostic Report">
+            <button id="open-report-btn" class="report-icon-btn" title="Diagnostic Report"
+                data-i18n-title="footerReportBtnTitle">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                     stroke-linecap="round" stroke-linejoin="round">
                     <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z">
@@ -176,6 +182,7 @@
             </button>
         </footer>
         <script src="utils/logger.js"></script>
+        <script src="utils/i18n.js"></script>
         <script src="popup.js"></script>
 </body>
 

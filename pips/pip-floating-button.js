@@ -28,7 +28,8 @@
 
             const { id, text, storageKey, style = {}, onClick } = config;
             const _text = text || this.getInactiveIcon();
-            const _create = () => window.PiPUtils.createFloatingButton({ id, text: _text, storageKey, style, onClick });
+            const _title = chrome.i18n.getMessage("pipBtnTitle");
+            const _create = () => window.PiPUtils.createFloatingButton({ id, text: _text, title: _title, storageKey, style, onClick });
 
             // Create the main button (PiPUtils handles drag + position persistence).
             // safeAppendToBody() may defer the append until DOMContentLoaded if body
@@ -83,7 +84,7 @@
 
             const ball = document.createElement('div');
             ball.id = 'pipSelectorBall';
-            ball.title = 'Seleccionar video específico';
+            ball.title = chrome.i18n.getMessage("pipSelectorTitle");
             ball.innerHTML = `
                 <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
                      stroke="currentColor" stroke-width="2"
@@ -244,7 +245,7 @@
             const btn = document.createElement('button');
             btn.id = 'universalSelectorBtn';
             btn.innerHTML = this.getInactiveIcon();
-            btn.title = 'Seleccionar video para PiP';
+            btn.title = chrome.i18n.getMessage("pipSelectorTitle");
             btn.setAttribute('data-pip-ui', 'true');
 
             Object.assign(btn.style, {
@@ -454,7 +455,7 @@
             if (!btn) return;
             const isActive = forceActiveState !== null ? forceActiveState : !!document.pictureInPictureElement;
             btn.innerHTML = isActive ? this.getActiveIcon() : this.getInactiveIcon();
-            btn.title = isActive ? 'Salir de PiP' : 'Seleccionar video para PiP';
+            btn.title = isActive ? chrome.i18n.getMessage("pipBtnExitTitle") : chrome.i18n.getMessage("pipSelectorTitle");
             btn.style.background = isActive ? 'rgba(30, 30, 35, 0.9)' : 'rgba(30, 30, 35, 0.7)';
             btn.style.boxShadow = '0 8px 32px rgba(0, 0, 0, 0.4)';
         }

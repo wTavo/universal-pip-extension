@@ -516,7 +516,7 @@
          */
         updateNavCollapse: (btn, isExpanded) => {
             if (!btn) return;
-            const title = isExpanded ? "Ocultar botones" : "Mostrar botones";
+            const title = isExpanded ? chrome.i18n.getMessage("pipNavHideBtnTitle") : chrome.i18n.getMessage("pipNavShowBtnTitle");
             btn.innerHTML = '';
             btn.appendChild(createSVG(isExpanded ? ICONS.up : ICONS.down));
             btn.title = title;
@@ -622,7 +622,7 @@
                     persist: false,
                     ...pipOptions
                 });
-                btn.title = "Mostrar/Ocultar controles de volumen";
+                btn.title = chrome.i18n.getMessage("pipToggleBtnTitle");
                 // Intentionally omit data-pip-ui='true' so the origin domain logic in volume-panel.js manages it.
                 btn.setAttribute('data-original-display', 'flex');
                 return btn;
@@ -630,7 +630,7 @@
 
             const btn = createEl(doc, 'button', {
                 id: 'pipPanelToggle',
-                title: "Mostrar/Ocultar controles de volumen (Modo Básico)"
+                title: chrome.i18n.getMessage("pipToggleBtnBasicTitle")
             }, BTN_THEMES.TOGGLE_FALLBACK);
             btn.appendChild(renderIcon(doc, ICONS.mixer, '24px'));
             btn.setAttribute('data-pip-fallback', 'true');
@@ -666,12 +666,12 @@
             }, PANEL_STYLES.SLIDER);
 
             Object.assign(volumeSlider, {
-                ariaLabel: 'Volume', role: 'slider', ariaOrientation: 'vertical',
+                ariaLabel: chrome.i18n.getMessage("pipVolumeSliderAria"), role: 'slider', ariaOrientation: 'vertical',
                 ariaValueMin: '0', ariaValueMax: '100', ariaValueNow: '100'
             });
 
             volumeContainer.appendChild(volumeSlider);
-            const muteBtn = createBasePipBtn(doc, 'globalPipMute', 'Mute/Unmute', ICONS.volumeHigh, 'high');
+            const muteBtn = createBasePipBtn(doc, 'globalPipMute', chrome.i18n.getMessage("pipMuteBtnTitle"), ICONS.volumeHigh, 'high');
             applyBtnTheme(muteBtn, BTN_THEMES.PREMIUM);
 
             return { volumeContainer, volumeSlider, muteBtn };
@@ -722,20 +722,20 @@
             // Intentionally omit data-pip-ui='true' to bypass local-tab-only visibility.
 
             const toggleNavBtn = createEl(doc, 'button', {
-                id: 'pipNavCollapseBtn', title: 'Ocultar botones'
+                id: 'pipNavCollapseBtn', title: chrome.i18n.getMessage("pipNavHideBtnTitle")
             }, BTN_THEMES.ARC.base);
-            toggleNavBtn.setAttribute('aria-label', "Ocultar botones");
+            toggleNavBtn.setAttribute('aria-label', chrome.i18n.getMessage("pipNavHideBtnTitle"));
             toggleNavBtn.appendChild(createSVG(ICONS.down));
             applyBtnTheme(toggleNavBtn, BTN_THEMES.ARC);
             container.appendChild(toggleNavBtn);
 
             const wrapper = createEl(doc, 'div', { id: 'pipNavButtonsWrapper' }, PANEL_STYLES.NAV_WRAPPER);
             const buttons = [
-                { id: null, title: 'Previous Video', icon: ICONS.up },
-                { id: null, title: 'Pausa', icon: ICONS.pause, key: 'pause' },
-                { id: null, title: 'Next Video', icon: ICONS.down },
-                { id: 'globalPipNavContainer_like', title: 'Me Gusta', icon: ICONS.likeBase },
-                { id: 'globalPipNavContainer_favorite', title: 'Favoritos', icon: ICONS.favoriteBase }
+                { id: null, title: chrome.i18n.getMessage("pipNavPrevVideoTitle"), icon: ICONS.up },
+                { id: null, title: chrome.i18n.getMessage("pipNavPauseTitle"), icon: ICONS.pause, key: 'pause' },
+                { id: null, title: chrome.i18n.getMessage("pipNavNextVideoTitle"), icon: ICONS.down },
+                { id: 'globalPipNavContainer_like', title: chrome.i18n.getMessage("pipNavLikeTitle"), icon: ICONS.likeBase },
+                { id: 'globalPipNavContainer_favorite', title: chrome.i18n.getMessage("pipNavFavTitle"), icon: ICONS.favoriteBase }
             ].map(b => {
                 const btn = createBasePipBtn(doc, b.id, b.title, b.icon, b.key);
                 applyBtnTheme(btn, BTN_THEMES.NAV);

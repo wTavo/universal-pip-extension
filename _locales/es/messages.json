@@ -1,0 +1,157 @@
+{
+    "extName": {
+        "message": "Universal PiP"
+    },
+    "extDesc": {
+        "message": "PiP (Picture-in-picture) y control de volumen."
+    },
+    "cmdHideUiDesc": {
+        "message": "Ocultar interfaz de la extensión"
+    },
+    "cmdShowUiDesc": {
+        "message": "Mostrar interfaz de la extensión"
+    },
+    "cmdFocusPipDesc": {
+        "message": "Traer ventana PiP al frente"
+    },
+    "cmdClosePipDesc": {
+        "message": "Cerrar ventana PiP"
+    },
+    "popupTitle": {
+        "message": "Universal PiP"
+    },
+    "popupSettingsBtnTitle": {
+        "message": "Configuración"
+    },
+    "popupSubtitle": {
+        "message": "Control de Picture-in-Picture"
+    },
+    "popupShortcutsLabel": {
+        "message": "Atajos de teclado"
+    },
+    "popupScopeAllPages": {
+        "message": "Todas las páginas"
+    },
+    "popupGlobalStatus": {
+        "message": "Global: "
+    },
+    "popupCurrentStatus": {
+        "message": "Actual: "
+    },
+    "statusVisible": {
+        "message": "Visible"
+    },
+    "statusHidden": {
+        "message": "Oculto"
+    },
+    "statusNA": {
+        "message": "N/D"
+    },
+    "popupHideUiTitle": {
+        "message": "Ocultar interfaz"
+    },
+    "popupHideUiDesc": {
+        "message": "Oculta toda la interfaz de la extensión"
+    },
+    "popupShowUiTitle": {
+        "message": "Mostrar interfaz"
+    },
+    "popupShowUiDesc": {
+        "message": "Restaura la interfaz de la extensión"
+    },
+    "popupFocusPipTitle": {
+        "message": "Traer PiP al frente"
+    },
+    "popupFocusPipDesc": {
+        "message": "Enfoca la ventana PiP oculta"
+    },
+    "popupClosePipTitle": {
+        "message": "Cerrar ventana PiP"
+    },
+    "popupClosePipDesc": {
+        "message": "Salir de Picture-in-Picture"
+    },
+    "modalSettingsTitle": {
+        "message": "Configuración"
+    },
+    "modalDebugModeLabel": {
+        "message": "Modo de depuración"
+    },
+    "modalDebugModeDesc": {
+        "message": "Mostrar registros en la consola del navegador"
+    },
+    "modalErrorLogsLabel": {
+        "message": "Registros de errores"
+    },
+    "modalClearLogsBtnTitle": {
+        "message": "Borrar registros almacenados"
+    },
+    "modalReportTitle": {
+        "message": "Reporte de diagnóstico"
+    },
+    "modalReportDesc1": {
+        "message": "Esto generará un archivo <strong>.txt</strong> con información técnica sobre el estado de la extensión, incluida la versión, información del navegador y registros de depuración si están habilitados."
+    },
+    "modalReportDesc2": {
+        "message": "No se incluyen datos personales, URL ni historial de navegación. Comparte este reporte con el desarrollador para ayudar a diagnosticar problemas."
+    },
+    "modalGenerateReportBtn": {
+        "message": "Generar reporte"
+    },
+    "footerReportBtnTitle": {
+        "message": "Reporte de diagnóstico"
+    },
+    "bytesUsed": {
+        "message": "$1 en uso",
+        "placeholders": {
+            "1": {
+                "content": "$1"
+            }
+        }
+    },
+    "pipToggleBtnTitle": {
+        "message": "Mostrar/Ocultar controles de volumen"
+    },
+    "pipToggleBtnBasicTitle": {
+        "message": "Mostrar/Ocultar controles de volumen (Modo Básico)"
+    },
+    "pipMuteBtnTitle": {
+        "message": "Silenciar/Activar sonido"
+    },
+    "pipVolumeSliderAria": {
+        "message": "Volumen"
+    },
+    "pipNavHideBtnTitle": {
+        "message": "Ocultar botones"
+    },
+    "pipNavShowBtnTitle": {
+        "message": "Mostrar botones"
+    },
+    "pipNavPrevVideoTitle": {
+        "message": "Video anterior"
+    },
+    "pipNavPauseTitle": {
+        "message": "Pausar"
+    },
+    "pipNavPlayTitle": {
+        "message": "Reproducir"
+    },
+    "pipNavNextVideoTitle": {
+        "message": "Video siguiente"
+    },
+    "pipNavLikeTitle": {
+        "message": "Me Gusta"
+    },
+    "pipNavFavTitle": {
+        "message": "Favoritos"
+    },
+    "pipSelectorTitle": {
+        "message": "Seleccionar video específico"
+    },
+    "pipBtnTitle": {
+        "message": "Seleccionar video para PiP"
+    },
+    "pipBtnExitTitle": {
+        "message": "Salir de PiP"
+    }
+}

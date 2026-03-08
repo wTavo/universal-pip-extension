@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Universal PiP",
+  "default_locale": "en",
   "version": "1.0",
-  "description": "PiP (Picture-in-picture) and volume control.",
+  "description": "__MSG_extDesc__",
   "permissions": [
     "storage",
     "tabs",
@@ -29,28 +30,28 @@
         "default": "Alt+Period",
         "mac": "Alt+Period"
       },
-      "description": "Hide Extension UI"
+      "description": "__MSG_cmdHideUiDesc__"
     },
     "show_ui": {
       "suggested_key": {
         "default": "Alt+Comma",
         "mac": "Alt+Comma"
       },
-      "description": "Show Extension UI"
+      "description": "__MSG_cmdShowUiDesc__"
     },
     "focus_pip": {
       "suggested_key": {
         "default": "Alt+F",
         "mac": "Alt+F"
       },
-      "description": "Bring PiP Window to Front"
+      "description": "__MSG_cmdFocusPipDesc__"
     },
     "close_pip": {
       "suggested_key": {
         "default": "Alt+Shift+F",
         "mac": "Alt+Shift+F"
       },
-      "description": "Close PiP Window"
+      "description": "__MSG_cmdClosePipDesc__"
     }
   },
   "content_scripts": [
