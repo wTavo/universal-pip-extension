@@ -657,7 +657,7 @@
                     isPlaying = !isPlaying;
                     window.PiPVolumePanelUI.updatePlayPauseStatus(playPauseBtn, isPlaying);
                     window.PiPVolumePanelLayout.animateClick(playPauseBtn);
-                    UTILS.sendMsg({ type: 'TOGGLE_PLAYBACK', playing: isPlaying });
+                    UTILS.sendMsg({ type: 'TOGGLE_PLAY', playing: isPlaying });
                 });
 
                 if (isTikTokLive || state.platform === 'twitch') {
