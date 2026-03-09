@@ -39,6 +39,10 @@ const lastPanelShow = new Map(); // tabId -> timestamp
 // Suppresses bridge feedback loop during slider drag (prevents log spam)
 let _volumeDragActive = false;
 
+// Navigation grace period to prevent PiP cleanup during video swaps
+let _navigationGraceTabId = null;
+let _navigationGraceTimer = null;
+
 // Helper para guardar estado
 async function savePipState(newState) {
     // serialize writes to prevent lost updates
@@ -579,6 +583,14 @@ async function handlePipActivated(message, sender, sendResponse) {
 
 async function handleNavigateVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
+        // Set navigation grace period
+        _navigationGraceTabId = pipState.tabId;
+        if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
+        _navigationGraceTimer = setTimeout(() => {
+            _navigationGraceTabId = null;
+            _navigationGraceTimer = null;
+        }, 2000); // 2 second grace period for video swap
+
         await safeSendMessage(pipState.tabId, {
             type: 'NAVIGATE_VIDEO',
             direction: message.direction
@@ -1036,9 +1048,15 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     }
 
     const currentState = await getPipState();
+    const isNavigationGrace = tabId === _navigationGraceTabId;
 
     // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check)
     if (currentState.active && tabId === currentState.tabId) {
+        if (isNavigationGrace) {
+            log.info('Origin tab updated during navigation grace period. Skipping validation.');
+            return;
+        }
+
         // Special Handling for Prime Video:
         // Prime often updates the URL slightly after the video starts (e.g. adding ref markers).
         // If we are on Prime and PiP is confirmed active, we should NOT reset state just because URL changed.

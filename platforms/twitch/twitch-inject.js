@@ -47,8 +47,13 @@
         });
     }
 
+    let _ignoreNextPopstate = false;
     // Exit PiP on browser back/forward navigation
     window.addEventListener('popstate', () => {
+        if (_ignoreNextPopstate) {
+            _ignoreNextPopstate = false;
+            return;
+        }
         if (document.pictureInPictureElement) {
             document.dispatchEvent(new CustomEvent('Twitch_Control_Event', { detail: { action: 'EXIT_PIP' } }));
         }
@@ -110,6 +115,11 @@
             'CHANGE_VOLUME': (msg) => ({ action: 'SET_VOLUME', value: msg.volume }),
             'TOGGLE_MUTE_VIDEO': (msg) => ({ action: msg.muted ? 'MUTE' : 'UNMUTE' }),
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
+            'NAVIGATE_VIDEO': (msg) => {
+                _ignoreNextPopstate = true;
+                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
+                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
+            },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
             'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' }),

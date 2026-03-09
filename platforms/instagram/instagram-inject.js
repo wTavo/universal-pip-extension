@@ -36,8 +36,13 @@
         });
     }
 
+    let _ignoreNextPopstate = false;
     // Exit PiP on browser back/forward navigation
     window.addEventListener('popstate', () => {
+        if (_ignoreNextPopstate) {
+            _ignoreNextPopstate = false;
+            return;
+        }
         if (document.pictureInPictureElement) {
             document.dispatchEvent(new CustomEvent('Instagram_Control_Event', { detail: { action: 'EXIT_PIP' } }));
         }
@@ -102,7 +107,11 @@
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
-            'NAVIGATE_VIDEO': (msg) => ({ action: 'NAVIGATE_VIDEO', direction: msg.direction }),
+            'NAVIGATE_VIDEO': (msg) => {
+                _ignoreNextPopstate = true;
+                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
+                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
+            },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
             'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' })
