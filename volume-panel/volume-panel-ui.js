@@ -424,6 +424,7 @@
             if (iconKey) svg.dataset.icon = iconKey;
             btn.appendChild(svg);
         }
+        btn.setAttribute('data-pip-managed', 'true');
         return btn;
     }
 
@@ -632,6 +633,7 @@
                 id: 'pipPanelToggle',
                 title: chrome.i18n.getMessage("pipToggleBtnBasicTitle")
             }, BTN_THEMES.TOGGLE_FALLBACK);
+            btn.setAttribute('data-pip-managed', 'true');
             btn.appendChild(renderIcon(doc, ICONS.mixer, '24px'));
             btn.setAttribute('data-pip-fallback', 'true');
             // Intentionally omit data-pip-ui='true'
@@ -647,6 +649,7 @@
         createControlPanelHost: (doc) => {
             const panel = doc.createElement('div');
             panel.id = 'globalPipControlPanel';
+            panel.setAttribute('data-pip-managed', 'true');
             // Important: We intentionally DO NOT set data-pip-ui='true' here.
             // The Volume Panel is a global session UI element, so its visibility is controlled
             // by pipState.originDomain rules, not the local tab's ui-visibility-listener.
@@ -719,6 +722,7 @@
          */
         buildNavGroup: (doc) => {
             const container = createEl(doc, 'div', { id: 'globalPipNavContainer' }, PANEL_STYLES.NAV_CONTAINER);
+            container.setAttribute('data-pip-managed', 'true');
             // Intentionally omit data-pip-ui='true' to bypass local-tab-only visibility.
 
             const toggleNavBtn = createEl(doc, 'button', {

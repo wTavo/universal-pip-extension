@@ -530,9 +530,11 @@
         let navContainer = targetDoc.getElementById(navContainerId);
         const currentPlatform = state.platform || 'unknown';
         const currentIsShorts = !!state.isShorts;
+        const currentSupportsNav = !!state.supportsNavigation;
         const needsRebuild = navContainer && (
             navContainer.getAttribute('data-platform') !== currentPlatform ||
-            navContainer.getAttribute('data-is-shorts') !== String(currentIsShorts)
+            navContainer.getAttribute('data-is-shorts') !== String(currentIsShorts) ||
+            navContainer.getAttribute('data-supports-nav') !== String(currentSupportsNav)
         );
 
         if (needsRebuild) {
@@ -542,7 +544,7 @@
             navContainer = null;
         }
 
-        const supportedPlatforms = ['tiktok', 'youtube', 'twitch'];
+        const supportedPlatforms = ['tiktok', 'youtube', 'twitch', 'instagram'];
         if (!supportedPlatforms.includes(currentPlatform) || STATE.isSelectorMode) {
             if (navContainer) {
                 cleanupNavSyncListeners();
@@ -558,6 +560,7 @@
                 navContainer = navUi.container;
                 navContainer.setAttribute('data-platform', currentPlatform);
                 navContainer.setAttribute('data-is-shorts', String(currentIsShorts));
+                navContainer.setAttribute('data-supports-nav', String(currentSupportsNav));
                 navContainer.setAttribute('data-original-display', 'flex');
 
                 const arcBtn = navUi.toggleNavBtn;
@@ -660,13 +663,13 @@
                     UTILS.sendMsg({ type: 'TOGGLE_PLAY', playing: isPlaying });
                 });
 
-                if (isTikTokLive || state.platform === 'twitch') {
+                if (!currentSupportsNav) {
                     navUi.prevBtn.remove();
                     navUi.nextBtn?.remove();
                 }
                 if (STATE.isSelectorMode) playPauseBtn.remove();
                 if ((state.platform === 'twitch' || isTikTokLive)) likeBtn.remove();
-                if ((state.platform !== 'tiktok' || isTikTokLive)) favBtn.remove();
+                if ((state.platform !== 'tiktok' && state.platform !== 'instagram') || isTikTokLive) favBtn.remove();
 
                 targetDoc.body.appendChild(navContainer);
                 requestAnimationFrame(() => updateNavPosition());
