@@ -43,8 +43,12 @@ let _volumeDragActive = false;
 let _navigationGraceTabId = null;
 let _navigationGraceTimer = null;
 
+// Track tabs where the control panel was shown to ensure surgical cleanup when PiP ends
+const _activeSessionTabIds = new Set();
+
 // Helper para guardar estado
 async function savePipState(newState) {
+    let changed = false;
     // serialize writes to prevent lost updates
     _saveLock = _saveLock.then(async () => {
         // Recupera la versión más reciente desde storage para comparar
@@ -65,14 +69,19 @@ async function savePipState(newState) {
         });
 
         if (!hasChanges) {
-            return;
+            return { changed: false, state: current };
         }
 
         await chrome.storage.local.set({ pipState: merged });
         pipState = merged;
         if (!pipState.domainExceptions) pipState.domainExceptions = {};
-        log.info('State saved:', pipState);
-    }).catch(err => log.error('savePipState error:', err && err.message));
+        log.info('State saved (Changes detected):', newState);
+        changed = true;
+        return { changed: true, state: merged };
+    }).catch(err => {
+        log.error('savePipState error:', err && err.message);
+        return { changed: false, state: pipState };
+    });
 
     return _saveLock;
 }
@@ -430,11 +439,27 @@ async function showControlPanel(tabId, overrideVisibility = null) {
     }
 
     lastPanelShow.set(tabId, now);
+    _activeSessionTabIds.add(tabId); // Track tab for surgical cleanup
     safeSendMessage(tabId, {
         type: 'SHOW_VOLUME_PANEL',
         state: freshState,
         sessionVisible: isVisible // Pass calculated visibility
     });
+}
+
+/**
+ * Surgically removes the volume panel from all tabs where it was displayed during the session.
+ */
+async function cleanupAllSessionPanels() {
+    if (_activeSessionTabIds.size === 0) return;
+
+    log.info(`Surgically cleaning up panels from ${_activeSessionTabIds.size} tabs.`);
+    const cleanupPromises = Array.from(_activeSessionTabIds).map(id =>
+        safeSendMessage(id, { type: 'HIDE_VOLUME_PANEL' })
+    );
+
+    await Promise.allSettled(cleanupPromises);
+    _activeSessionTabIds.clear();
 }
 
 // Helper to safely send message with Promise wrapper and error handling
@@ -546,6 +571,7 @@ async function handlePipActivated(message, sender, sendResponse) {
         isExtensionTriggered: !!message.isExtensionTriggered,
         platform: message.platform || 'unknown',
         isShorts: message.isShorts || false,
+        supportsNavigation: !!message.supportsNavigation,
         playing: typeof message.playing === 'boolean' ? message.playing : true,
         isLive: typeof message.isLive === 'boolean' ? message.isLive : false,
         originDomain: originDomain
@@ -558,7 +584,7 @@ async function handlePipActivated(message, sender, sendResponse) {
     await syncToRelevantTabs({
         type: 'PIP_SESSION_STARTED',
         originTabId: newTabId
-    }, { excludeTabId: newTabId });
+    }); // Broadcast to everyone, including sender, for UI icon sync
 
     // Explicitly show the control panel on the origin tab.
     // This is required because handlePipActivated doesn't automatically trigger UI updates
@@ -634,27 +660,30 @@ async function handleToggleFavorite(message, sender, sendResponse) {
 
 async function handleUpdateFavoriteState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
-        await savePipState({ favorited: message.favorited });
-
-        await syncToRelevantTabs({ type: 'SYNC_FAVORITE_UI', favorited: message.favorited });
+        const result = await savePipState({ favorited: message.favorited });
+        if (result.changed) {
+            await syncToRelevantTabs({ type: 'SYNC_FAVORITE_UI', favorited: message.favorited });
+        }
     }
     sendResponse({ success: true });
 }
 
 async function handleUpdateLikeState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
-        await savePipState({ liked: message.liked });
-
-        await syncToRelevantTabs({ type: 'SYNC_LIKE_UI', liked: message.liked });
+        const result = await savePipState({ liked: message.liked });
+        if (result.changed) {
+            await syncToRelevantTabs({ type: 'SYNC_LIKE_UI', liked: message.liked });
+        }
     }
     sendResponse({ success: true });
 }
 
 async function handleUpdatePlaybackState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
-        await savePipState({ playing: message.playing });
-
-        await syncToRelevantTabs({ type: 'SYNC_PLAYBACK_UI', playing: message.playing });
+        const result = await savePipState({ playing: message.playing });
+        if (result.changed) {
+            await syncToRelevantTabs({ type: 'SYNC_PLAYBACK_UI', playing: message.playing });
+        }
     }
     sendResponse({ success: true });
 }
@@ -664,11 +693,8 @@ async function handlePipDeactivated(message, sender, sendResponse) {
         log.info('PiP deactivated by tab:', sender.tab?.id, 'Origin was:', pipState.tabId);
 
         // Notify the origin tab to hide its UI
-        if (pipState.tabId) {
-            await safeSendMessage(pipState.tabId, { type: 'HIDE_VOLUME_PANEL' });
-        }
-
         await savePipState({ active: false, tabId: null });
+        await cleanupAllSessionPanels(); // Targeted surgical cleanup
         await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
     } else {
         log.info('Ignored PIP_DEACTIVATED - PiP already inactive');
@@ -775,9 +801,9 @@ async function handleUpdateVolumeState(message, sender, sendResponse) {
         if (message.volume !== undefined) newState.volume = message.volume;
         if (message.muted !== undefined) newState.muted = message.muted;
 
-        await savePipState(newState);
+        const result = await savePipState(newState);
 
-        if (message.volume !== undefined || message.muted !== undefined) {
+        if (result.changed && (message.volume !== undefined || message.muted !== undefined)) {
             await syncToRelevantTabs({
                 type: "SYNC_VOLUME_UI",
                 volume: message.volume,
@@ -789,13 +815,14 @@ async function handleUpdateVolumeState(message, sender, sendResponse) {
 }
 
 async function handleSetNavExpanded(message, sender, sendResponse) {
-    await savePipState({ navExpanded: message.expanded });
-    log.info('Nav Expanded set to:', message.expanded);
-
-    await syncToRelevantTabs({
-        type: 'SYNC_NAV_EXPANDED',
-        expanded: message.expanded
-    });
+    const result = await savePipState({ navExpanded: message.expanded });
+    if (result.changed) {
+        log.info('Nav Expanded set to:', message.expanded);
+        await syncToRelevantTabs({
+            type: 'SYNC_NAV_EXPANDED',
+            expanded: message.expanded
+        });
+    }
     sendResponse({ success: true });
 }
 
@@ -1007,8 +1034,11 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     if (tabId === pipState.tabId) {
         log.info('Tab closed');
         await savePipState({ active: false, tabId: null });
+        await cleanupAllSessionPanels(); // Cleanup Google tabs if YouTube closed
         await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
     }
+    // Memory Safety: remove from tracking set if tab is closed
+    _activeSessionTabIds.delete(tabId);
 });
 
 // Detectar cuando se activa una pestaña (el usuario cambia de pestaña)
@@ -1024,9 +1054,6 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
             if (success) {
                 setTimeout(() => showControlPanel(tab.id), 200);
             }
-        } else {
-            // Lazy Cleanup: If PiP is off, ensure orphaned panels in background tabs are hidden
-            safeSendMessage(tab.id, { type: 'HIDE_VOLUME_PANEL' });
         }
     } catch (e) { }
 });
@@ -1039,6 +1066,14 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     if (changeInfo.status !== 'complete') return;
     if (!tab.url) return;
 
+    const currentState = await getPipState();
+
+    // If PiP is NOT active, we don't need to do anything or log anything for every tab update.
+    if (!currentState.active) return;
+
+    // A page reload naturally removes our panel, so we stop tracking it for cleanup
+    _activeSessionTabIds.delete(tabId);
+
     log.info('Tab updated/reloaded:', tabId);
 
     // Cleanup debounce tracker if tab moved to unsupported domain
@@ -1047,7 +1082,6 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         return;
     }
 
-    const currentState = await getPipState();
     const isNavigationGrace = tabId === _navigationGraceTabId;
 
     // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check)
@@ -1096,8 +1130,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                 await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
                 return;
             } else {
-                log.info('PiP survived update. Keeping state.');
-                // Re-inject panel just in case (SPA redraws might kill it)
+                log.info('PiP survived update. Refreshing metadata.');
+                if (response.metadata) {
+                    await savePipState(response.metadata);
+                }
             }
         } catch (e) {
             // Should be caught by safeSendMessage, but just in case
