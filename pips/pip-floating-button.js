@@ -11,6 +11,9 @@
     const _send = (type) => { try { chrome.runtime.sendMessage({ type }); } catch (e) { log.trace('msg failed:', type, e.message); } };
 
     window.PiPFloatingButton = {
+        _managedButtons: new Set(),
+        _syncInitialized: false,
+        _isPipActiveGlobal: false,
 
         /**
          * Creates and maintains a platform-specific floating PiP button
@@ -25,8 +28,10 @@
          */
         init(config) {
             if (!window.PiPUtils) return;
-
             const { id, text, storageKey, style = {}, onClick } = config;
+            this._managedButtons.add(id);
+            this._initGlobalSync();
+
             const _text = text || this.getInactiveIcon();
             const _title = chrome.i18n.getMessage("pipBtnTitle");
             const _create = () => window.PiPUtils.createFloatingButton({ id, text: _text, title: _title, storageKey, style, onClick });
@@ -70,6 +75,63 @@
                 if (b) { clearInterval(t); _onBtnReady(b); }
             }, 50);
             window.addEventListener('pagehide', () => clearInterval(t), { once: true });
+
+            window.addEventListener('pagehide', () => clearInterval(t), { once: true });
+        },
+
+        isActive() {
+            return this._isPipActiveGlobal || !!document.pictureInPictureElement;
+        },
+
+        _initGlobalSync() {
+            if (this._syncInitialized) return;
+            this._syncInitialized = true;
+
+            const _onMsg = (msg) => {
+                if (msg.type === 'PIP_ACTIVATED' || msg.type === 'PIP_SESSION_STARTED') {
+                    this._isPipActiveGlobal = true;
+                    this._refreshManagedIcons(true);
+                } else if (msg.type === 'HIDE_VOLUME_PANEL' || msg.type === 'PIP_DEACTIVATED') {
+                    this._isPipActiveGlobal = false;
+                    this._refreshManagedIcons(false);
+                }
+            };
+
+            chrome.runtime.onMessage.addListener(_onMsg);
+
+            // Initial sync
+            if (window.PiPUtils?.safeSendMessage) {
+                window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
+                    if (res?.state?.active) {
+                        this._isPipActiveGlobal = true;
+                        this._refreshManagedIcons(true);
+                    }
+                });
+            }
+
+            // Visibility sync (compensate for lazy background)
+            document.addEventListener('visibilitychange', () => {
+                if (document.visibilityState === 'visible' && window.PiPUtils?.safeSendMessage) {
+                    window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
+                        this._isPipActiveGlobal = !!res?.state?.active;
+                        this._refreshManagedIcons(this._isPipActiveGlobal);
+                    });
+                }
+            });
+        },
+
+        _refreshManagedIcons(isActive) {
+            this._managedButtons.forEach(id => {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+
+                if (id === 'universalSelectorBtn') {
+                    this._updateFallbackState(btn, isActive);
+                } else {
+                    btn.innerHTML = isActive ? this.getActiveIcon() : this.getInactiveIcon();
+                    btn.title = isActive ? chrome.i18n.getMessage("pipBtnExitTitle") : chrome.i18n.getMessage("pipBtnTitle");
+                }
+            });
         },
 
         /**
@@ -214,6 +276,10 @@
          * Appears in the bottom right corner when a video is present.
          */
         initFallback(config = { storageKey: 'pipBtnPos_Generic' }) {
+            this._managedButtons.add('universalSelectorBtn');
+            this._initGlobalSync();
+
+            // IFRAME LOGIC: Just notify background if we have video, don't create button
             // IFRAME LOGIC: Just notify background if we have video, don't create button
             if (window !== window.top) {
                 const checkVids = () => {

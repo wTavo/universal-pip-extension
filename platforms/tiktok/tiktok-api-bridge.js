@@ -28,7 +28,7 @@
     }
 
     function findLikeButton(video) {
-        const icons = document.querySelectorAll('[data-e2e="like-icon"]');
+        const icons = document.querySelectorAll('[data-e2e="like-icon"]:not([data-pip-managed])');
         if (!icons.length) return null;
 
         const buttons = [...icons].map(el => el.closest('button')).filter(Boolean);
@@ -38,7 +38,7 @@
 
     function findFavoriteButton(video) {
         // TikTok keeps changing this. undefined-icon is common, but collect-icon is also used.
-        const icons = document.querySelectorAll('[data-e2e="undefined-icon"]');
+        const icons = document.querySelectorAll('[data-e2e="undefined-icon"]:not([data-pip-managed])');
         if (!icons.length) return null;
 
         const buttons = [...icons].map(el => el.closest('button')).filter(Boolean);

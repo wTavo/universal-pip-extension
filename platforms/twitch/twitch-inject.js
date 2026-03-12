@@ -4,16 +4,7 @@
     if (window.__TWITCH_PIP_INJECT_LOADED__) return;
     window.__TWITCH_PIP_INJECT_LOADED__ = true;
 
-    let _pipActive = false; // tracks global PiP state (cross-tab)
-
-    // --- Helper: update floating button icon ---
-    function updatePipBtn(htmlContent) {
-        const btn = document.getElementById("twitchPipBtn");
-        if (btn) btn.innerHTML = htmlContent;
-    }
-
-    function setActive() { _pipActive = true; updatePipBtn(window.PiPFloatingButton.getActiveIcon()); }
-    function setInactive() { _pipActive = false; updatePipBtn(window.PiPFloatingButton.getInactiveIcon()); }
+    // --- UI Listeners and state handled by PiPFloatingButton manager ---
 
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
@@ -32,6 +23,7 @@
                 return {
                     platform: 'twitch',
                     isShorts: false, // Twitch doesn't have Shorts natively handled in this player context
+                    supportsNavigation: false,
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
                     isLive: isLive
@@ -39,12 +31,7 @@
             }
         });
 
-        // Request initial state to sync button icon if PiP is already active globally
-        window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
-            if (res && res.state && res.state.active) {
-                setActive();
-            }
-        });
+        // Initial state sync handled globally by PiPFloatingButton manager
     }
 
     let _ignoreNextPopstate = false;
@@ -87,7 +74,7 @@
 
     // --- Core Functionality ---
     function togglePiP() {
-        if (_pipActive) {
+        if (window.PiPFloatingButton?.isActive?.()) {
             // PiP is active (may be in another tab) — route exit via background
             try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
             return;
@@ -124,9 +111,7 @@
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
             'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' }),
             'PAUSE_VIDEO': () => ({ action: 'PAUSE' }),
-            'PIP_ACTIVATED': () => { setActive(); },
-            'PIP_SESSION_STARTED': () => { setActive(); },
-            'HIDE_VOLUME_PANEL': () => { setInactive(); }
+            'HIDE_VOLUME_PANEL': () => { /* icon update handled globally */ }
         });
     }
 

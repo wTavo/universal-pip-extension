@@ -11,20 +11,18 @@
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
         window.PiPUtils.trackPiPState({
             onEnter: (video) => {
-                const pipBtn = document.getElementById("instagramPipBtn");
-                if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getActiveIcon();
                 // Clear trigger flag after activation
                 setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
             },
             onExit: (video) => {
-                const pipBtn = document.getElementById("instagramPipBtn");
-                if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getInactiveIcon();
+                // Handled globally
             },
             metadataCollector: (video) => {
                 const isLive = window.location.pathname.includes('/live/');
 
                 return {
                     platform: 'instagram',
+                    supportsNavigation: window.location.pathname.includes('/reels/') || window.location.pathname === '/',
                     // Detect if PiP was triggered by the selector ball (pip-selector-logic.js sets this flag)
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
@@ -94,6 +92,11 @@
 
     // --- Core Functionality Updated ---
     function togglePiP() {
+        if (window.PiPFloatingButton?.isActive?.()) {
+            // PiP is active (may be in another tab) — route exit via background
+            try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
+            return;
+        }
         window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
         window.__pipExt.isTriggered = true;
         document.dispatchEvent(new CustomEvent('Instagram_Control_Event', { detail: { action: 'REQUEST_PIP' } }));

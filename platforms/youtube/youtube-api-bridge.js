@@ -37,7 +37,7 @@
 
         // Standard watch page
         const candidates = document.querySelectorAll(
-            '#segmented-like-button button, like-button-view-model button, #top-level-buttons-computed ytd-toggle-button-renderer button, button[aria-label*="like" i], button[aria-label*="me gusta" i]'
+            '#segmented-like-button button:not([data-pip-managed]), like-button-view-model button:not([data-pip-managed]), #top-level-buttons-computed ytd-toggle-button-renderer button:not([data-pip-managed]), button[aria-label*="like" i]:not([data-pip-managed]), button[aria-label*="me gusta" i]:not([data-pip-managed])'
         );
         if (!candidates.length) return null;
 

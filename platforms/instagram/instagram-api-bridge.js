@@ -30,11 +30,11 @@
         // Instagram SVG Like Button Finder
         for (let i = 0; i < 15; i++) {
             if (!parent) break;
-            const candidates = parent.querySelectorAll('svg[aria-label="Like"], svg[aria-label="Unlike"], svg[aria-label="Me gusta"], svg[aria-label="Ya no me gusta"]');
+            const candidates = parent.querySelectorAll('svg[aria-label="Like"]:not([data-pip-managed]), svg[aria-label="Unlike"]:not([data-pip-managed]), svg[aria-label="Me gusta"]:not([data-pip-managed]), svg[aria-label="Ya no me gusta"]:not([data-pip-managed])');
             if (candidates.length) return normalizeToRole(getClosestCandidate(video, candidates));
             parent = parent.parentElement;
         }
-        const allCandidates = document.querySelectorAll('svg[aria-label="Like"], svg[aria-label="Unlike"], svg[aria-label="Me gusta"], svg[aria-label="Ya no me gusta"]');
+        const allCandidates = document.querySelectorAll('svg[aria-label="Like"]:not([data-pip-managed]), svg[aria-label="Unlike"]:not([data-pip-managed]), svg[aria-label="Me gusta"]:not([data-pip-managed]), svg[aria-label="Ya no me gusta"]:not([data-pip-managed])');
         return normalizeToRole(getClosestCandidate(video, allCandidates));
     }
 
@@ -43,11 +43,11 @@
         let parent = video.parentElement;
         for (let i = 0; i < 15; i++) {
             if (!parent) break;
-            const candidates = parent.querySelectorAll('svg[aria-label="Save"], svg[aria-label="Remove"], svg[aria-label="Guardar"], svg[aria-label="Eliminar"]');
+            const candidates = parent.querySelectorAll('svg[aria-label="Save"]:not([data-pip-managed]), svg[aria-label="Remove"]:not([data-pip-managed]), svg[aria-label="Guardar"]:not([data-pip-managed]), svg[aria-label="Eliminar"]:not([data-pip-managed])');
             if (candidates.length) return normalizeToRole(getClosestCandidate(video, candidates));
             parent = parent.parentElement;
         }
-        const allCandidates = document.querySelectorAll('svg[aria-label="Save"], svg[aria-label="Remove"], svg[aria-label="Guardar"], svg[aria-label="Eliminar"]');
+        const allCandidates = document.querySelectorAll('svg[aria-label="Save"]:not([data-pip-managed]), svg[aria-label="Remove"]:not([data-pip-managed]), svg[aria-label="Guardar"]:not([data-pip-managed]), svg[aria-label="Eliminar"]:not([data-pip-managed])');
         return normalizeToRole(getClosestCandidate(video, allCandidates));
     }
 

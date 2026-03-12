@@ -141,12 +141,15 @@
         const centerY = videoRect.top + videoRect.height / 2;
 
         for (const candidate of candidates) {
+            // IGNORE extension UI to prevent feedback loops
+            if (candidate.hasAttribute?.('data-pip-managed')) continue;
+
             const btn =
                 candidate.tagName === 'BUTTON'
                     ? candidate
                     : candidate.closest('button');
 
-            if (!btn) continue;
+            if (!btn || btn.hasAttribute('data-pip-managed')) continue;
 
             const rect = btn.getBoundingClientRect();
 

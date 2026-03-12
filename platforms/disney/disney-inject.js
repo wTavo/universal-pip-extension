@@ -2,7 +2,7 @@
     'use strict';
     const log = PiPLogger.create('Disney');
 
-    let pipActive = false;
+    // --- UI Listeners and state handled by PiPFloatingButton manager ---
     let currentVideo = null;
 
 
@@ -50,8 +50,9 @@
 
         currentVideo = video;
         monitorVolumeChanges(video);
+        const isActive = window.PiPFloatingButton?.isActive?.();
 
-        if (!pipActive) {
+        if (!isActive) {
             try {
                 video.muted = false;
 
@@ -144,16 +145,15 @@
                 }
 
                 await video.requestPictureInPicture();
-                pipActive = true;
-
-                if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getActiveIcon();
+                // Icon update handled globally
 
                 // Iniciar monitor de navegación/invalidación
                 let lastCheckedHref = window.location.href;
                 let hasLoggedVideoRemoval = false;
 
                 const checkInterval = setInterval(() => {
-                    if (!pipActive) {
+                    const isActive = window.PiPFloatingButton?.isActive?.();
+                    if (!isActive) {
                         clearInterval(checkInterval);
                         return;
                     }
@@ -249,8 +249,7 @@
     }
 
     async function forcePiPExit(pipBtn) {
-        pipActive = false;
-        if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getInactiveIcon();
+        // Icon update handled globally
 
         if (document.pictureInPictureElement) {
             try {
@@ -265,10 +264,7 @@
 
     // Detectar cuando se sale del PiP
     document.addEventListener('leavepictureinpicture', () => {
-        pipActive = false;
-        const pipBtn = document.getElementById("disneyPipBtn");
-        if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getInactiveIcon();
-
+        // Handled globally
         chrome.runtime.sendMessage({
             type: 'PIP_DEACTIVATED'
         });
@@ -346,7 +342,8 @@
     // Detectar cuando cambia el video visible en Disney
     function setupVideoChangeDetection() {
         const observer = new IntersectionObserver((entries) => {
-            if (!pipActive) return;
+            const isActive = window.PiPFloatingButton?.isActive?.();
+            if (!isActive) return;
 
             entries.forEach(entry => {
                 if (entry.isIntersecting && entry.target.tagName === 'VIDEO') {

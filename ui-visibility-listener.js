@@ -586,6 +586,7 @@
 
         trackPiPState: function (options) {
             const { onEnter, onExit, metadataCollector } = options;
+            window.PiPUtils._metadataCollector = metadataCollector;
 
             document.addEventListener('enterpictureinpicture', (e) => {
                 const video = e.target;
@@ -647,8 +648,15 @@
                     }
                     sendResponse({ success: true });
                 } else if (message.type === 'VALIDATE_PIP_STATUS') {
-                    const isActive = !!document.pictureInPictureElement;
-                    sendResponse({ success: true, isActive: isActive });
+                    const video = document.pictureInPictureElement;
+                    const isActive = !!video;
+                    let metadata = {};
+                    if (isActive && window.PiPUtils._metadataCollector) {
+                        try {
+                            metadata = window.PiPUtils._metadataCollector(video);
+                        } catch (e) { }
+                    }
+                    sendResponse({ success: true, isActive: isActive, metadata: metadata });
                 }
             };
 
