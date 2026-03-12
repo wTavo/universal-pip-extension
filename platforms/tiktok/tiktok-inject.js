@@ -5,6 +5,8 @@
     window.__TIKTOK_PIP_INJECT_LOADED__ = true;
 
     // --- UI Listeners and state handled by PiPFloatingButton manager ---
+    let currentLiked = false;
+    let currentFavorited = false;
 
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {

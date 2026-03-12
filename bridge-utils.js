@@ -19,6 +19,11 @@
     };
 
     let cachedActiveVideo = null;
+    let lastNavigationTime = 0;
+
+    function signalNavigation() {
+        lastNavigationTime = Date.now();
+    }
 
     function getVideoFromViewportCenter() {
         const x = window.innerWidth / 2;
@@ -351,7 +356,7 @@
                     Date.now() - lastHiddenTime;
 
                 if (
-                    timeSinceHide < 1000 &&
+                    (timeSinceHide < 1000 || (Date.now() - lastNavigationTime < 2000)) &&
                     Date.now() - lastForcePlay > 1000
                 ) {
                     lastForcePlay = Date.now();
@@ -402,6 +407,7 @@
         enableAutoSwitching,
         disableAutoSwitching,
         enableAntiPause,
+        signalNavigation,
         _refreshActiveVideo: refreshActiveVideo
     };
 

@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, signalNavigation } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -28,7 +28,7 @@
     }
 
     function findLikeButton(video) {
-        const icons = document.querySelectorAll('[data-e2e="like-icon"]:not([data-pip-managed])');
+        const icons = document.querySelectorAll('[data-e2e="like-icon"]:not([data-pip-managed]), [data-e2e="browse-like-icon"]:not([data-pip-managed])');
         if (!icons.length) return null;
 
         const buttons = [...icons].map(el => el.closest('button')).filter(Boolean);
@@ -358,6 +358,7 @@
                 break;
 
             case ACTIONS.NAVIGATE_VIDEO: {
+                if (signalNavigation) signalNavigation();
                 const isNext = direction === 'next';
                 const key = isNext ? 'ArrowDown' : 'ArrowUp';
                 const eventOptions = { key, code: key, keyCode: isNext ? 40 : 38, bubbles: true, cancelable: true, view: window };
