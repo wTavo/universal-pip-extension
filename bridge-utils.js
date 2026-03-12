@@ -231,7 +231,12 @@
             if (isLocked) return;
 
             const visibleEntry = entries
-                .filter(e => e.isIntersecting)
+                .filter(e => {
+                    if (!e.isIntersecting) return false;
+                    // Ignore very small videos (likely previews/thumbnails)
+                    const { width } = e.boundingClientRect;
+                    return width >= 280;
+                })
                 .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
 
             if (!visibleEntry) return;
