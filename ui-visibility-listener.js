@@ -358,6 +358,14 @@
                 if (e.cancelable) e.preventDefault();
             };
 
+            // Unified Navigation Relay: Detect when the page (BridgeUtils) starts a navigation intent
+            // and notify the background script so it can activate its grace period.
+            window.addEventListener('PIP_NAVIGATING', () => {
+                if (_runtime && _runtime.sendMessage) {
+                    _runtime.sendMessage({ type: 'SIGNAL_NAVIGATION' });
+                }
+            });
+
             const onPointerUp = (e) => {
                 if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; }
                 document.removeEventListener('pointermove', onPointerMove);
@@ -620,6 +628,17 @@
                     if (document.pictureInPictureElement) {
                         // A new video took over PiP immediately. Squelch the exit event.
                         log.info('Video swapped - suppressing PiP exit.');
+                        return;
+                    }
+
+                    // CHECK NAVIGATION STATE: If we are in the middle of a swap (scroll/buttons)
+                    // don't tell the background that PiP ended. This keeps the panel alive.
+                    // We check BOTH the BridgeUtils internal state AND the DOM attribute bridge.
+                    const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
+                                       document.documentElement.hasAttribute('data-pip-navigating');
+
+                    if (isNavigating) {
+                        log.info('Navigation in progress - suppressing PiP deactivation signal.');
                         return;
                     }
 

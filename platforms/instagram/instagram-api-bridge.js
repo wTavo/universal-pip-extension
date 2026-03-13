@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, signalNavigation } = window.BridgeUtils;
 
     // -------- BUTTON FINDERS --------
 
@@ -107,32 +107,38 @@
     // -------- STATE --------
 
     let lastBroadcastState = null;
-    let monitoredVideo = null;
 
-    const monitorState = () => {
-        const video = getActiveVideo();
-        if (!video) return;
+    const monitorState = (e) => {
+        // 1. Context Detection: Prioritize event target or passed element.
+        const targetVideo = (e instanceof HTMLVideoElement) ? e : 
+                           (e && e.target instanceof HTMLVideoElement) ? e.target : 
+                           getActiveVideo();
 
-        // Re-attach listeners if video changed
-        if (video !== monitoredVideo) {
-            if (monitoredVideo) {
-                const events = ['play', 'pause', 'volumechange'];
-                events.forEach(evt => monitoredVideo.removeEventListener(evt, monitorState));
-            }
+        if (!targetVideo) return;
 
-            monitoredVideo = video;
-            lastBroadcastState = null; // Force update on video change
-
-            const events = ['play', 'pause', 'volumechange'];
-            events.forEach(evt => video.addEventListener(evt, monitorState));
+        // 2. Ownership Filter: If in PiP, ONLY allow updates from the PiP video itself.
+        const currentPiP = document.pictureInPictureElement;
+        if (currentPiP && targetVideo !== currentPiP) {
+            return;
         }
 
+        // 3. Filter: Only ignore 'pause' during navigation to prevent flickering.
+        // 'Play' events are ALWAYS trusted as they signal a successful landing.
+        const playing = !targetVideo.paused;
+        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
+        
+        if (isNavigating && !playing) {
+            return;
+        }
+
+        if (!document.pictureInPictureElement) return;
+
         const state = {
-            liked: getLikeStatus(video),
-            favorited: getFavoriteStatus(video),
-            playing: !video.paused,
-            volume: Math.round(video.volume * 100),
-            muted: video.muted
+            liked: getLikeStatus(targetVideo),
+            favorited: getFavoriteStatus(targetVideo),
+            playing: playing,
+            volume: Math.round(targetVideo.volume * 100),
+            muted: targetVideo.muted
         };
 
         const stateJSON = JSON.stringify(state);
@@ -142,6 +148,11 @@
         }
     };
 
+    // Global Capturing Listeners: Natural sync without per-video handlers.
+    ['play', 'pause', 'volumechange'].forEach(evt => {
+        document.addEventListener(evt, monitorState, { capture: true, passive: true });
+    });
+
     // Reset cache when PiP enters
     document.addEventListener('enterpictureinpicture', () => {
         lastBroadcastState = null;
@@ -149,7 +160,10 @@
     });
 
     if (window.BridgeUtils.enableAutoSwitching) {
-        window.BridgeUtils.enableAutoSwitching(monitorState);
+        window.BridgeUtils.enableAutoSwitching((newVideo) => {
+            lastBroadcastState = null; // Reset memory to force fresh update
+            monitorState(newVideo);    // Sync immediately for the specific video
+        });
     }
 
     if (window.BridgeUtils.enableAntiPause) {
@@ -288,12 +302,13 @@
                 break;
 
             case ACTIONS.NAVIGATE_VIDEO: {
+                if (signalNavigation) signalNavigation();
                 const isNext = direction === 'next';
                 const key = isNext ? 'ArrowDown' : 'ArrowUp';
                 const eventOptions = { key, code: key, keyCode: isNext ? 40 : 38, bubbles: true, cancelable: true, view: window };
                 document.body.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
                 document.body.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
-                setTimeout(monitorState, 800);
+                // No timeout needed: global capture listeners handle it naturally
                 break;
             }
 

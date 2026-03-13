@@ -1014,6 +1014,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             handleCheckPipStatus(message, sender, sendResponse);
             return true;
 
+        case 'SIGNAL_NAVIGATION':
+            if (sender.tab && sender.tab.id) {
+                // Activate navigation grace period for this tab
+                _navigationGraceTabId = sender.tab.id;
+                if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
+                _navigationGraceTimer = setTimeout(() => {
+                    _navigationGraceTabId = null;
+                    _navigationGraceTimer = null;
+                }, 2000); // 2 second grace period
+                log.info('SIGNAL_NAVIGATION received from tab:', sender.tab.id);
+            }
+            sendResponse({ success: true });
+            return false;
+
         case 'PING':
             handlePing(message, sender, sendResponse);
             return false;

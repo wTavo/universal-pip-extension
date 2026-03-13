@@ -20,9 +20,57 @@
 
     let cachedActiveVideo = null;
     let lastNavigationTime = 0;
+    let _isNavigating = false;
+    let _navTimer = null;
 
     function signalNavigation() {
         lastNavigationTime = Date.now();
+        _isNavigating = true;
+        try {
+            document.documentElement.setAttribute('data-pip-navigating', 'true');
+            // Notify content script so it can relay to background
+            window.dispatchEvent(new CustomEvent('PIP_NAVIGATING'));
+        } catch (e) {}
+
+        if (_navTimer) clearTimeout(_navTimer);
+        _navTimer = setTimeout(() => {
+            _isNavigating = false;
+            _navTimer = null;
+            try {
+                document.documentElement.removeAttribute('data-pip-navigating');
+            } catch (e) {}
+        }, 1500); // 1.5s window to swap videos
+    }
+
+    function isNavigating() {
+        return _isNavigating || document.documentElement.hasAttribute('data-pip-navigating');
+    }
+
+    // --- Unified Navigation Listener ---
+    function setupNavigationListeners() {
+        // Detect Scroll
+        const onScrollIntent = () => signalNavigation();
+        window.addEventListener('wheel', onScrollIntent, { passive: true });
+        window.addEventListener('mousewheel', onScrollIntent, { passive: true });
+        window.addEventListener('touchstart', onScrollIntent, { passive: true });
+
+        // Detect Keys
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.keyCode === 38 || e.keyCode === 40) {
+                signalNavigation();
+            }
+        }, { passive: true });
+    }
+
+    // Initialize listeners
+    setupNavigationListeners();
+
+    function isEligibleForPiP(video, rect) {
+        if (!video) return false;
+        const r = rect || video.getBoundingClientRect();
+        // Ignore very small videos relative to viewport (likely previews/thumbnails)
+        // At least 20% of viewport width and non-zero height
+        return r.width >= window.innerWidth * 0.20 && r.height > 0;
     }
 
     function getVideoFromViewportCenter() {
@@ -47,7 +95,7 @@
 
         // FAST PATH: video en el centro del viewport
         const centerVideo = getVideoFromViewportCenter();
-        if (centerVideo) {
+        if (centerVideo && isEligibleForPiP(centerVideo)) {
             cachedActiveVideo = centerVideo;
             return cachedActiveVideo;
         }
@@ -61,10 +109,9 @@
             const r = v.getBoundingClientRect();
 
             if (
-                r.width > 0 &&
-                r.height > 0 &&
                 r.bottom > 0 &&
-                r.top < window.innerHeight
+                r.top < window.innerHeight &&
+                isEligibleForPiP(v, r)
             ) {
                 items.push({ v, r });
             }
@@ -233,9 +280,7 @@
             const visibleEntry = entries
                 .filter(e => {
                     if (!e.isIntersecting) return false;
-                    // Ignore very small videos (likely previews/thumbnails)
-                    const { width } = e.boundingClientRect;
-                    return width >= 280;
+                    return isEligibleForPiP(e.target, e.boundingClientRect);
                 })
                 .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
 
@@ -244,11 +289,21 @@
             const newVideo = visibleEntry.target;
             const currentPiP = document.pictureInPictureElement;
 
-            if (
-                currentPiP &&
-                newVideo !== currentPiP &&
-                !isSwitchingVideo
-            ) {
+            if (currentPiP && newVideo !== currentPiP && !isSwitchingVideo) {
+                // STABILITY CHECK: If current video is still highly visible, don't switch.
+                const rect = currentPiP.getBoundingClientRect();
+                const vh = window.innerHeight;
+                const vw = window.innerWidth;
+                const visibleHeight = Math.min(rect.bottom, vh) - Math.max(rect.top, 0);
+                const visibleWidth = Math.min(rect.right, vw) - Math.max(rect.left, 0);
+                const visibleArea = Math.max(0, visibleWidth) * Math.max(0, visibleHeight);
+                const totalArea = rect.width * rect.height;
+
+                if (totalArea > 0 && (visibleArea / totalArea) > 0.8) {
+                    return; // Current video is stable, ignore switch.
+                }
+
+                signalNavigation();
                 isSwitchingVideo = true;
 
                 const performSwitch = () => {
@@ -256,14 +311,15 @@
 
                     newVideo.requestPictureInPicture()
                         .then(() => {
+                            // Notify bridge FIRST so it can attach listeners/sync context
+                            onSwitchCallback?.(newVideo);
+
+                            // Then start playing
                             newVideo.play().catch(() => { });
 
                             setTimeout(() => {
                                 isSwitchingVideo = false;
                             }, 150);
-
-                            onSwitchCallback?.(newVideo);
-
                         })
                         .catch(() => {
                             isSwitchingVideo = false;
@@ -413,6 +469,7 @@
         disableAutoSwitching,
         enableAntiPause,
         signalNavigation,
+        isNavigating,
         _refreshActiveVideo: refreshActiveVideo
     };
 

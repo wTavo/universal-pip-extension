@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, signalNavigation } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -101,32 +101,37 @@
     // -------- STATE --------
 
     let lastBroadcastState = null;
-    let monitoredVideo = null;
 
-    const monitorState = () => {
-        const video = getActiveVideo();
-        if (!video) return;
+    const monitorState = (e) => {
+        // 1. Context Detection: Prioritize event target or passed element.
+        const targetVideo = (e instanceof HTMLVideoElement) ? e : 
+                           (e && e.target instanceof HTMLVideoElement) ? e.target : 
+                           getActiveVideo();
 
-        const pipActive = !!document.pictureInPictureElement;
+        if (!targetVideo) return;
 
-        // Only attach/re-attach video event listeners while PiP is active.
-        if (pipActive && video !== monitoredVideo) {
-            if (monitoredVideo) {
-                VIDEO_STATE_EVENTS.forEach(evt => monitoredVideo.removeEventListener(evt, monitorState));
-            }
-
-            monitoredVideo = video;
-            lastBroadcastState = null; // Force update on video change
-
-            VIDEO_STATE_EVENTS.forEach(evt => video.addEventListener(evt, monitorState));
+        // 2. Ownership Filter: If in PiP, ONLY allow updates from the PiP video itself.
+        const currentPiP = document.pictureInPictureElement;
+        if (currentPiP && targetVideo !== currentPiP) {
+            return;
         }
 
-        const liked = getLikeStatus(video);
-        const playing = !video.paused;
-        const volume = Math.round(video.volume * 100);
-        const muted = video.muted;
+        // 3. Filter: Only ignore 'pause' during navigation to prevent flickering.
+        // 'Play' events are ALWAYS trusted as they signal a successful landing.
+        const playing = !targetVideo.paused;
+        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
+        
+        if (isNavigating && !playing) {
+            return;
+        }
 
-        // Fast shallow comparison — avoids JSON.stringify overhead
+        if (!document.pictureInPictureElement) return;
+
+        const liked = getLikeStatus(targetVideo);
+        const volume = Math.round(targetVideo.volume * 100);
+        const muted = targetVideo.muted;
+
+        // Fast shallow comparison
         if (lastBroadcastState &&
             lastBroadcastState.liked === liked &&
             lastBroadcastState.playing === playing &&
@@ -140,6 +145,11 @@
         document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: state }));
     };
 
+    // Global Capturing Listeners: Catch state changes as they happen naturally.
+    VIDEO_STATE_EVENTS.forEach(evt => {
+        document.addEventListener(evt, monitorState, { capture: true, passive: true });
+    });
+
     // Reset state when PiP enters so the UI gets a fresh update.
     // Also connect structural observers so they only run during PiP.
     document.addEventListener('enterpictureinpicture', () => {
@@ -148,15 +158,8 @@
         requestAnimationFrame(monitorState);
     });
 
-    // Clean up when PiP exits: detach video event listeners, disconnect ALL
-    // observers and clear all caches so NOTHING runs in the background.
+    // Clean up when PiP exits
     document.addEventListener('leavepictureinpicture', () => {
-        if (monitoredVideo) {
-            VIDEO_STATE_EVENTS.forEach(
-                evt => monitoredVideo.removeEventListener(evt, monitorState)
-            );
-            monitoredVideo = null;
-        }
 
         likeBtnObserver?.disconnect();
         likeClickController?.abort();
@@ -171,7 +174,10 @@
     });
 
     if (enableAutoSwitching) {
-        enableAutoSwitching(monitorState);
+        enableAutoSwitching((newVideo) => {
+            lastBroadcastState = null; // Reset memory to force fresh update
+            monitorState(newVideo);    // Sync immediately for the specific video
+        });
     }
 
     // -------- INTERACTIVE OBSERVERS --------
@@ -332,12 +338,13 @@
                 break;
 
             case ACTIONS.NAVIGATE_VIDEO: {
+                if (signalNavigation) signalNavigation();
                 const isNext = direction === 'next';
                 const key = isNext ? 'ArrowDown' : 'ArrowUp';
                 const eventOptions = { key, code: key, keyCode: isNext ? 40 : 38, bubbles: true, cancelable: true, view: window };
                 document.body.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
                 document.body.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
-                setTimeout(monitorState, 800);
+                // No timeout needed: global capture listeners handle it natively
                 break;
             }
 
