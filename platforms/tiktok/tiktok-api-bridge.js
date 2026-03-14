@@ -193,6 +193,7 @@
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
             lastBroadcastState = null; // Reset memory to force fresh update
+            monitorInteractiveElements();
             monitorState(newVideo);    // Sync immediately for the specific video
         });
     }

@@ -253,21 +253,17 @@
     function setupShortsObserver() {
         if (shortsObserver) shortsObserver.disconnect();
 
-        const shortsContainer = document.querySelector('ytd-shorts, #shorts-container');
-        if (!shortsContainer) return;
-
-        shortsObserver = new MutationObserver((mutations) => {
-            const changed = mutations.some(m => m.type === 'attributes' && m.attributeName === 'is-active');
-            if (changed) {
-                monitorInteractiveElements();
-                monitorState();
-            }
-        });
-        shortsObserver.observe(shortsContainer, {
-            attributes: true,
-            attributeFilter: ['is-active'],
-            subtree: true
-        });
+        if (window.BridgeUtils?.enableFastVideoSwitching) {
+            shortsObserver = window.BridgeUtils.enableFastVideoSwitching({
+                containerSelector: 'ytd-shorts, #shorts-container',
+                attribute: 'is-active',
+                onSwitch: (v) => {
+                    lastBroadcastState = null;
+                    monitorInteractiveElements();
+                    monitorState(v);
+                }
+            });
+        }
     }
 
     // YouTube-specific: re-scan on SPA navigation + re-check Shorts container

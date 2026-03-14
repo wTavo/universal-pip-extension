@@ -59,7 +59,7 @@
                         }
                     }, 300);
                 });
-                domObserver.observe(document.body, { childList: true, subtree: true });
+                domObserver.observe(document.documentElement, { childList: true, subtree: true });
                 window.addEventListener('pagehide', () => {
                     domObserver.disconnect();
                     if (_moTimer) { clearTimeout(_moTimer); _moTimer = null; }
@@ -299,7 +299,7 @@
                             if (checkVids()) vObs.disconnect();
                         }, 2000); // Throttled to 2s to match old intensity but event-driven
                     });
-                    vObs.observe(document.body, { childList: true, subtree: true });
+                    vObs.observe(document.documentElement, { childList: true, subtree: true });
                     window.addEventListener('pagehide', () => vObs.disconnect(), { once: true });
                 }
                 return;
@@ -427,7 +427,7 @@
                     if (document.querySelector('video')) { revealBtn(); videoObserver.disconnect(); }
                 }, 1000);
             });
-            videoObserver.observe(document.body, { childList: true, subtree: true });
+            videoObserver.observe(document.documentElement, { childList: true, subtree: true });
             window.addEventListener('pagehide', () => {
                 videoObserver.disconnect();
                 if (throttleTimer) { clearTimeout(throttleTimer); throttleTimer = null; }

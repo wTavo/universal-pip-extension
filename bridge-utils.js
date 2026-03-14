@@ -260,21 +260,94 @@
         return null;
     }
 
+    function switchToVideo(newVideo, onSwitchCallback) {
+        const currentPiP = document.pictureInPictureElement;
+        if (!newVideo || newVideo === currentPiP || (window.BridgeUtils && window.BridgeUtils._isSwitching)) return;
+
+        signalNavigation();
+        if (window.BridgeUtils) window.BridgeUtils._isSwitching = true;
+
+        const performSwitch = () => {
+            newVideo.removeAttribute('disablePictureInPicture');
+            newVideo.requestPictureInPicture()
+                .then(() => {
+                    onSwitchCallback?.(newVideo);
+                    newVideo.play().catch(() => { });
+                    setTimeout(() => {
+                        if (window.BridgeUtils) window.BridgeUtils._isSwitching = false;
+                    }, 150);
+                })
+                .catch(() => {
+                    if (window.BridgeUtils) window.BridgeUtils._isSwitching = false;
+                });
+        };
+
+        if (newVideo.readyState >= 1) performSwitch();
+        else newVideo.addEventListener('loadedmetadata', performSwitch, { once: true });
+    }
+
+    /**
+     * Generalized helper to enable fast PiP switching based on DOM attributes (e.g. is-active).
+     * Bypasses IntersectionObserver for near-instant transitions.
+     */
+    function enableFastVideoSwitching(options = {}) {
+        const { containerSelector, attribute = 'is-active', onSwitch } = options;
+        const container = document.querySelector(containerSelector);
+        if (!container) return null;
+
+        const observer = new MutationObserver((mutations) => {
+            mutations.forEach(m => {
+                if (m.type === 'attributes' && m.attributeName === attribute && m.target.hasAttribute(attribute)) {
+                    const newVideo = m.target.querySelector('video');
+                    if (newVideo && document.pictureInPictureElement) {
+                        switchToVideo(newVideo, onSwitch);
+                    }
+                }
+            });
+        });
+
+        observer.observe(container, {
+            attributes: true,
+            attributeFilter: [attribute],
+            subtree: true
+        });
+
+        return observer;
+    }
+
     function enableAutoSwitching(onSwitchCallback) {
         if (_pipObserver) return;
-
-        let isSwitchingVideo = false;
+        
+        // Store callback globally within bridge context for the natural play switch
+        window.BridgeUtils._onSwitchCallback = onSwitchCallback;
 
         const feed = findFeedContainer() || null;
         const observed = new WeakSet();
 
+        // 1. Natural Play Switch: If a new video starts playing, it's likely the user's focus.
+        // This handles cases where IntersectionObserver might be slow or platform attributes are missing.
+        document.addEventListener('play', (e) => {
+            const currentPiP = document.pictureInPictureElement;
+            if (!currentPiP || window.BridgeUtils?._isSwitching) return;
+
+            const newVideo = e.target;
+            if (newVideo.tagName === 'VIDEO' && newVideo !== currentPiP) {
+                // If the new video is highly visible and playing, take over PiP.
+                // We add a tiny delay to allow the browser to settle and ensure it's not a background pre-roll.
+                requestAnimationFrame(() => {
+                    const r = newVideo.getBoundingClientRect();
+                    if (isEligibleForPiP(newVideo, r) && !newVideo.paused) {
+                        switchToVideo(newVideo, onSwitchCallback);
+                    }
+                });
+            }
+        }, true);
+
+        // 2. IntersectionObserver: Standard fallback for scrolling without autoplay, or for pre-emptive swaps.
         _pipObserver = new IntersectionObserver((entries) => {
             if (!document.pictureInPictureElement) return;
 
-            const isLocked =
-                document.documentElement
-                    .hasAttribute('data-pip-selector-locked');
-
+            const isLocked = document.documentElement.hasAttribute('data-pip-selector-locked');
             if (isLocked) return;
 
             const visibleEntry = entries
@@ -289,7 +362,7 @@
             const newVideo = visibleEntry.target;
             const currentPiP = document.pictureInPictureElement;
 
-            if (currentPiP && newVideo !== currentPiP && !isSwitchingVideo) {
+            if (currentPiP && newVideo !== currentPiP && !(window.BridgeUtils && window.BridgeUtils._isSwitching)) {
                 // STABILITY CHECK: If current video is still highly visible, don't switch.
                 const rect = currentPiP.getBoundingClientRect();
                 const vh = window.innerHeight;
@@ -303,40 +376,12 @@
                     return; // Current video is stable, ignore switch.
                 }
 
-                signalNavigation();
-                isSwitchingVideo = true;
-
-                const performSwitch = () => {
-                    newVideo.removeAttribute('disablePictureInPicture');
-
-                    newVideo.requestPictureInPicture()
-                        .then(() => {
-                            // Notify bridge FIRST so it can attach listeners/sync context
-                            onSwitchCallback?.(newVideo);
-
-                            // Then start playing
-                            newVideo.play().catch(() => { });
-
-                            setTimeout(() => {
-                                isSwitchingVideo = false;
-                            }, 150);
-                        })
-                        .catch(() => {
-                            isSwitchingVideo = false;
-                        });
-                };
-
-                if (newVideo.readyState >= 1) performSwitch();
-                else newVideo.addEventListener(
-                    'loadedmetadata',
-                    performSwitch,
-                    { once: true }
-                );
+                switchToVideo(newVideo, onSwitchCallback);
             }
 
         }, {
             root: feed,
-            threshold: 0.45
+            threshold: 0.3 // Lower threshold for earlier detection
         });
 
         const observeVideo = (v) => {
@@ -467,9 +512,11 @@
         getClosestCandidate,
         enableAutoSwitching,
         disableAutoSwitching,
+        enableFastVideoSwitching,
         enableAntiPause,
         signalNavigation,
         isNavigating,
+        switchToVideo,
         _refreshActiveVideo: refreshActiveVideo
     };
 
