@@ -1094,6 +1094,8 @@ chrome.tabs.onActivated.addListener(async (activeInfo) => {
             log.info('PiP active, ensuring control panel in activated tab:', tab.id);
             const success = await injectControlPanel(tab.id, tab.url);
             if (success) {
+                // Clear debounce so onActivated ALWAYS triggers a fresh show event
+                lastPanelShow.delete(tab.id);
                 setTimeout(() => showControlPanel(tab.id), 200);
             }
         }

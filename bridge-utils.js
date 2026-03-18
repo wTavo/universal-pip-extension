@@ -60,6 +60,20 @@
                 signalNavigation();
             }
         }, { passive: true });
+
+        // SPA Navigation (History API)
+        const patch = (type) => {
+            const original = history[type];
+            history[type] = function() {
+                const result = original.apply(this, arguments);
+                signalNavigation();
+                return result;
+            };
+        };
+        patch('pushState');
+        patch('replaceState');
+
+        window.addEventListener('popstate', () => signalNavigation());
     }
 
     // Initialize listeners

@@ -92,12 +92,12 @@
 
         SHOW_VOLUME_PANEL: (msg, resp) => {
             const state = msg.state || {};
-            const isGlobalHidden = state.uiVisible === false;
-            const isOriginHidden = state.originDomain && state.domainExceptions && state.domainExceptions[state.originDomain] === false;
+            // Trust the calculated visibility from background if present
+            const isVisible = msg.sessionVisible !== undefined ? msg.sessionVisible : (state.uiVisible !== false);
 
-            if (isGlobalHidden || isOriginHidden) {
+            if (!isVisible) {
                 destroyUI();
-                return resp({ success: true, ignored: true, reason: 'origin_hidden' });
+                return resp({ success: true, ignored: true, reason: 'ui_hidden' });
             }
 
             STATE._destroyed = false;
@@ -116,12 +116,11 @@
 
         SYNC_SESSION_VISIBILITY: (msg, resp) => {
             const state = msg.state || {};
-            const isGlobalHidden = state.uiVisible === false;
-            const isOriginHidden = state.originDomain && state.domainExceptions && state.domainExceptions[state.originDomain] === false;
+            const isVisible = msg.visible !== undefined ? msg.visible : (state.uiVisible !== false);
 
-            if (isGlobalHidden || isOriginHidden) {
+            if (!isVisible) {
                 hidePanel();
-                return resp({ success: true, overridden: true, reason: 'origin_hidden' });
+                return resp({ success: true, overridden: true, reason: 'ui_hidden' });
             }
 
             showToggleButton(state);
