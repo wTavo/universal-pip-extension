@@ -418,7 +418,7 @@
 
     function createBasePipBtn(doc, id, title, iconDef, iconKey) {
         const btn = createEl(doc, 'button', { id: id || '', title: title || '' });
-        if (title) btn.setAttribute('aria-label', title);
+        if (title) btn.title = title;
         if (iconDef) {
             const svg = createSVG(iconDef);
             if (iconKey) svg.dataset.icon = iconKey;
@@ -521,7 +521,6 @@
             btn.innerHTML = '';
             btn.appendChild(createSVG(isExpanded ? ICONS.up : ICONS.down));
             btn.title = title;
-            btn.setAttribute('aria-label', title);
             btn.setAttribute('aria-pressed', String(isExpanded));
         },
 
@@ -669,7 +668,7 @@
             }, PANEL_STYLES.SLIDER);
 
             Object.assign(volumeSlider, {
-                ariaLabel: chrome.i18n.getMessage("pipVolumeSliderAria"), role: 'slider', ariaOrientation: 'vertical',
+                role: 'slider', ariaOrientation: 'vertical',
                 ariaValueMin: '0', ariaValueMax: '100', ariaValueNow: '100'
             });
 
@@ -709,7 +708,6 @@
         buildSeekBtn: (doc, iconDef, title) => {
             const btn = doc.createElement("button");
             btn.title = title;
-            btn.setAttribute('aria-label', title);
             btn.appendChild(createSVG(iconDef));
             applyBtnTheme(btn, BTN_THEMES.PREMIUM, "35px");
             return btn;
@@ -728,7 +726,6 @@
             const toggleNavBtn = createEl(doc, 'button', {
                 id: 'pipNavCollapseBtn', title: chrome.i18n.getMessage("pipNavHideBtnTitle")
             }, BTN_THEMES.ARC.base);
-            toggleNavBtn.setAttribute('aria-label', chrome.i18n.getMessage("pipNavHideBtnTitle"));
             toggleNavBtn.appendChild(createSVG(ICONS.down));
             applyBtnTheme(toggleNavBtn, BTN_THEMES.ARC);
             container.appendChild(toggleNavBtn);

@@ -35,9 +35,9 @@
             if (btn) return normalizeToButton(btn);
         }
 
-        // Standard watch page
+        // Standard watch page: Use specific IDs and view-model markers
         const candidates = document.querySelectorAll(
-            '#segmented-like-button button:not([data-pip-managed]), like-button-view-model button:not([data-pip-managed]), #top-level-buttons-computed ytd-toggle-button-renderer button:not([data-pip-managed]), button[aria-label*="like" i]:not([data-pip-managed]), button[aria-label*="me gusta" i]:not([data-pip-managed])'
+            '#segmented-like-button button:not([data-pip-managed]), like-button-view-model button:not([data-pip-managed]), #top-level-buttons-computed ytd-toggle-button-renderer button:not([data-pip-managed])'
         );
         if (!candidates.length) return null;
 
@@ -69,8 +69,9 @@
 
         if (btn.classList.contains('style-default-active')) return true;
 
-        const label = (btn.getAttribute('aria-label') || '').toLowerCase();
-        if (label.includes('unlike') || label.includes('quitar')) return true;
+        // Fallback: search for filled heart/thumb icon if aria-pressed is missing
+        const filledIcon = btn.querySelector('path[d*="M3,11h3v10H3V11z"], .style-default-active');
+        if (filledIcon) return true;
 
         return false;
     }
@@ -104,9 +105,9 @@
 
     const monitorState = (e) => {
         // 1. Context Detection: Prioritize event target or passed element.
-        const targetVideo = (e instanceof HTMLVideoElement) ? e : 
-                           (e && e.target instanceof HTMLVideoElement) ? e.target : 
-                           getActiveVideo();
+        const targetVideo = (e instanceof HTMLVideoElement) ? e :
+            (e && e.target instanceof HTMLVideoElement) ? e.target :
+                getActiveVideo();
 
         if (!targetVideo) return;
 
@@ -120,7 +121,7 @@
         // 'Play' events are ALWAYS trusted as they signal a successful landing.
         const playing = !targetVideo.paused;
         const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-        
+
         if (isNavigating && !playing) {
             return;
         }
