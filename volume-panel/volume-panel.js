@@ -203,6 +203,33 @@
         SYNC_FAVORITE_UI: (m, r) => { UTILS.dispatchSync("pip-favorite-sync", { favorited: m.favorited }); r({ success: true }); },
         SYNC_PLAYBACK_UI: (m, r) => { UTILS.dispatchSync("pip-playback-sync", { playing: m.playing }); r({ success: true }); },
 
+        SYNC_TIKTOK_LIVE_UI: (msg, resp) => {
+            const isTikTokLive = !!msg.isTikTokLive;
+            const hasFavorite = msg.hasFavorite !== false;
+            const hideFav = isTikTokLive || !hasFavorite;
+            const hideSeek = isTikTokLive;
+
+            // Toggle favorites button visibility
+            const likeBtn = targetDoc.getElementById('globalPipNavContainer_like');
+            const favBtn = targetDoc.getElementById('globalPipNavContainer_favorite');
+            if (likeBtn) likeBtn.style.display = isTikTokLive ? 'none' : 'flex';
+            if (favBtn) favBtn.style.display = hideFav ? 'none' : 'flex';
+
+            // Toggle seek buttons and separator visibility
+            const seekRow = targetDoc.getElementById('pipSeekButtonsRow');
+            const seekSep = targetDoc.getElementById('pipSeekSeparator');
+            if (seekRow) seekRow.style.display = hideSeek ? 'none' : 'flex';
+            if (seekSep) seekSep.style.display = hideSeek ? 'none' : 'block';
+
+            // Update cached state
+            if (STATE.pipState) {
+                STATE.pipState.isTikTokLive = isTikTokLive;
+                STATE.pipState.hasFavorite = hasFavorite;
+            }
+
+            resp({ success: true });
+        },
+
         SYNC_NAV_EXPANDED: (msg, resp) => {
             STATE.isNavExpanded = msg.expanded;
             const btn = targetDoc.getElementById("pipNavCollapseBtn");
@@ -422,8 +449,19 @@
         STATE.controlPanel.appendChild(muteBtn);
 
         const isTikTokLive = !!STATE.pipState?.isTikTokLive;
-        if (!STATE.isSelectorMode && (!isTikTokLive && !STATE.isLive)) {
-            STATE.controlPanel.appendChild(window.PiPVolumePanelUI.createSeparator(targetDoc));
+        const isTikTok = STATE.pipState?.platform === 'tiktok';
+        // For TikTok: always create seek section (so it can be toggled), but hide if live.
+        // For other platforms: only create if not selector mode and not live.
+        const shouldCreateSeek = isTikTok
+            ? !STATE.isSelectorMode
+            : (!STATE.isSelectorMode && !isTikTokLive && !STATE.isLive);
+
+        if (shouldCreateSeek) {
+            const seekSep = window.PiPVolumePanelUI.createSeparator(targetDoc);
+            seekSep.id = 'pipSeekSeparator';
+            if (isTikTok && (isTikTokLive || STATE.isLive)) seekSep.style.display = 'none';
+            STATE.controlPanel.appendChild(seekSep);
+
             const seekFeedback = window.PiPVolumePanelUI.buildHUD(targetDoc);
             seekFeedback.id = "pipSeekFeedback";
             const content = targetDoc.createElement('div');
@@ -460,7 +498,8 @@
 
             const buttonsRow = targetDoc.createElement("div");
             buttonsRow.id = "pipSeekButtonsRow";
-            buttonsRow.style.cssText = "display: flex; flex-direction: column; gap: 8px; justify-content: center; width: 100%; margin-top: 5px; align-items: center;";
+            const seekDisplay = (isTikTok && (isTikTokLive || STATE.isLive)) ? 'none' : 'flex';
+            buttonsRow.style.cssText = `display: ${seekDisplay}; flex-direction: column; gap: 8px; justify-content: center; width: 100%; margin-top: 5px; align-items: center;`;
             buttonsRow.appendChild(rewindBtn);
             buttonsRow.appendChild(forwardBtn);
             STATE.controlPanel.appendChild(buttonsRow);
@@ -507,10 +546,12 @@
 
         STATE.isSelectorMode = state.pipMode === "manual" || !!state.isSelectorMode;
         STATE.isLive = !!state.isLive;
+        const isTikTokLive = !!state.isTikTokLive;
+        const isTikTok = state.platform === 'tiktok';
 
         const seekRow = targetDoc.getElementById("pipSeekButtonsRow");
         const separators = targetDoc.querySelectorAll('.pip-separator');
-        if (STATE.isSelectorMode) {
+        if (STATE.isSelectorMode || (isTikTok && isTikTokLive)) {
             if (seekRow) seekRow.style.display = "none";
             separators.forEach(s => s.style.display = 'none');
         } else {
@@ -668,8 +709,18 @@
                     navUi.nextBtn?.remove();
                 }
                 if (STATE.isSelectorMode) playPauseBtn.remove();
-                if ((state.platform === 'twitch' || isTikTokLive)) likeBtn.remove();
-                if ((state.platform !== 'tiktok' && state.platform !== 'instagram') || isTikTokLive) favBtn.remove();
+                
+                // TikTok dynamic controls: use display:none so they can be restored later.
+                // Other platforms continue using .remove() for simplicity if they don't need restoration.
+                if (currentPlatform === 'tiktok') {
+                    const hideLike = isTikTokLive;
+                    const hideFav = isTikTokLive || state.hasFavorite === false;
+                    likeBtn.style.display = hideLike ? 'none' : 'flex';
+                    favBtn.style.display = hideFav ? 'none' : 'flex';
+                } else {
+                    if (state.platform === 'twitch') likeBtn.remove();
+                    if (state.platform !== 'instagram') favBtn.remove();
+                }
 
                 targetDoc.body.appendChild(navContainer);
                 requestAnimationFrame(() => updateNavPosition());
@@ -687,6 +738,21 @@
 
                     buttonsWrapper.style.display = canShow ? 'flex' : 'none';
                     buttonsWrapper.style.opacity = canShow ? '1' : '0';
+                }
+
+                // TikTok: sync dynamic button visibility from current state
+                if (state.platform === 'tiktok') {
+                    const ttLive = !!state.isTikTokLive;
+                    const hasFav = state.hasFavorite !== false;
+                    const hideFav = ttLive || !hasFav;
+                    
+                    const existingLike = navContainer.querySelector('#globalPipNavContainer_like');
+                    if (existingLike) existingLike.style.display = ttLive ? 'none' : 'flex';
+
+                    const existingFav = navContainer.querySelector('#globalPipNavContainer_favorite');
+                    if (existingFav) existingFav.style.display = hideFav ? 'none' : 'flex';
+
+                    // Note: Seek visibility is handled at the top of showToggleButton now.
                 }
 
                 // Sync other UI states

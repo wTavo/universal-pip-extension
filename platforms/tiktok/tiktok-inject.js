@@ -7,6 +7,8 @@
     // --- UI Listeners and state handled by PiPFloatingButton manager ---
     let currentLiked = false;
     let currentFavorited = false;
+    let currentIsLive = false;
+    let currentHasFavorite = true;
 
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
@@ -19,18 +21,12 @@
                 // Handled globally
             },
             metadataCollector: (video) => {
-                const urlIsLive = window.location.pathname.includes('/live/') ||
-                    (window.location.pathname.includes('@') && window.location.pathname.includes('/live'));
-                const hasLiveTitle = !!document.querySelector('[data-e2e="live-title"]') || !!document.querySelector('.live-stream-title');
-                const videoIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-                const isLive = urlIsLive || hasLiveTitle || videoIsLive;
-
                 return {
                     platform: 'tiktok',
-                    supportsNavigation: !isLive,
+                    supportsNavigation: !currentIsLive,
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
-                    isLive: isLive,
+                    isLive: currentIsLive,
                     liked: currentLiked,
                     favorited: currentFavorited
                 };
@@ -40,17 +36,6 @@
         // Initial state sync handled globally by PiPFloatingButton manager
     }
 
-    let _ignoreNextPopstate = false;
-    // Exit PiP on browser back/forward navigation
-    window.addEventListener('popstate', () => {
-        if (_ignoreNextPopstate) {
-            _ignoreNextPopstate = false;
-            return;
-        }
-        if (document.pictureInPictureElement) {
-            document.dispatchEvent(new CustomEvent('TikTok_Control_Event', { detail: { action: 'EXIT_PIP' } }));
-        }
-    });
 
     // --- Bridge Injection (Shared) ---
     function injectBridge() {
@@ -65,21 +50,28 @@
     injectBridge();
 
     // --- Bridge Communication ---
+    let _lastTikTokLive = null;
+    let _lastHasFavorite = null;
+
     document.addEventListener('TikTok_State_Update', (e) => {
-        const { liked, favorited, playing } = e.detail || {};
+        const { liked, favorited, playing, isTikTokLive, hasFavorite } = e.detail || {};
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof favorited === 'boolean') currentFavorited = favorited;
+        if (typeof isTikTokLive === 'boolean') currentIsLive = isTikTokLive;
+        if (typeof hasFavorite === 'boolean') currentHasFavorite = hasFavorite;
 
-        if (window.PiPUtils && window.PiPUtils.safeSendMessage) {
-            if (typeof liked === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_LIKE_STATE', liked });
-            }
-            if (typeof favorited === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_FAVORITE_STATE', favorited });
-            }
-            if (typeof playing === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_PLAYBACK_STATE', playing });
+        if (window.PiPUtils?.safeSendMessage) {
+            const send = (type, payload) => window.PiPUtils.safeSendMessage({ type, ...payload });
+
+            if (typeof liked === 'boolean') send('UPDATE_LIKE_STATE', { liked });
+            if (typeof favorited === 'boolean') send('UPDATE_FAVORITE_STATE', { favorited });
+            if (typeof playing === 'boolean') send('UPDATE_PLAYBACK_STATE', { playing });
+
+            if (currentIsLive !== _lastTikTokLive || currentHasFavorite !== _lastHasFavorite) {
+                _lastTikTokLive = currentIsLive;
+                _lastHasFavorite = currentHasFavorite;
+                send('UPDATE_TIKTOK_LIVE_STATE', { isTikTokLive: currentIsLive, hasFavorite: currentHasFavorite });
             }
         }
     });
@@ -117,8 +109,6 @@
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
             'NAVIGATE_VIDEO': (msg) => {
-                _ignoreNextPopstate = true;
-                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
                 return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
             },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),

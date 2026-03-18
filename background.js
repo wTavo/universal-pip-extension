@@ -15,6 +15,8 @@ const DEFAULT_PIP_STATE = Object.freeze({
     platform: null,
     playing: false,
     isLive: false,
+    isTikTokLive: false,
+    hasFavorite: true,
     originDomain: null,
     isExtensionTriggered: false,
     domainExceptions: {}
@@ -574,6 +576,8 @@ async function handlePipActivated(message, sender, sendResponse) {
         supportsNavigation: !!message.supportsNavigation,
         playing: typeof message.playing === 'boolean' ? message.playing : true,
         isLive: typeof message.isLive === 'boolean' ? message.isLive : false,
+        isTikTokLive: (message.platform === 'tiktok' && !!message.isLive),
+        hasFavorite: true,
         originDomain: originDomain
     };
     await savePipState(newState);
@@ -684,6 +688,26 @@ async function handleUpdatePlaybackState(message, sender, sendResponse) {
         if (result.changed) {
             await syncToRelevantTabs({ type: 'SYNC_PLAYBACK_UI', playing: message.playing });
         }
+    }
+    sendResponse({ success: true });
+}
+
+async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
+    if (sender.tab && sender.tab.id === pipState.tabId) {
+        const updates = {};
+        if (typeof message.isTikTokLive === 'boolean') updates.isTikTokLive = message.isTikTokLive;
+        if (typeof message.hasFavorite === 'boolean') updates.hasFavorite = message.hasFavorite;
+        
+        await savePipState(updates);
+        
+        // Broadcast to UI: ALWAYS sync for TikTok. 
+        // This ensures that if the background state was reset but the panel UI is still out of sync,
+        // it gets corrected immediately by the bridge's first evaluation.
+        await syncToRelevantTabs({ 
+            type: 'SYNC_TIKTOK_LIVE_UI', 
+            isTikTokLive: pipState.isTikTokLive, 
+            hasFavorite: pipState.hasFavorite 
+        });
     }
     sendResponse({ success: true });
 }
@@ -926,6 +950,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'UPDATE_PLAYBACK_STATE':
             handleUpdatePlaybackState(message, sender, sendResponse);
+            return true;
+
+        case 'UPDATE_TIKTOK_LIVE_STATE':
+            handleUpdateTikTokLiveState(message, sender, sendResponse);
             return true;
 
         case 'SET_VOLUME':

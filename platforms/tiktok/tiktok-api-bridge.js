@@ -11,7 +11,32 @@
 
     // -------- CONSTANTS --------
 
-    const VIDEO_STATE_EVENTS = ['play', 'pause', 'volumechange'];
+    const VIDEO_STATE_EVENTS = ['play', 'playing', 'pause', 'volumechange'];
+
+    const SELECTORS = {
+        ITEM: 'section[id^="media-card-"], [data-e2e="recommend-list-item-container"], [class*="ItemContainer"], article',
+        SIDEBAR: '[class*="ActionBarContainer"]',
+        LIKE_ICON: '[data-e2e="like-icon"], [data-e2e="browse-like-icon"]',
+        FAV_ICON: '[data-e2e="undefined-icon"], [data-e2e="collect-icon"], [data-e2e="browse-collect-icon"], [data-e2e="favorite-icon"]',
+        AD_TAG: '[data-e2e="ad-tag"]',
+        LIVE_TITLE: '[data-e2e="live-title"], .live-stream-title',
+        MUTE_BTN: '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
+    };
+
+    // -------- HELPERS --------
+
+    function getTikTokItem(video) {
+        if (!video) return null;
+        return video.closest(SELECTORS.ITEM);
+    }
+
+    function getTikTokSidebar(video) {
+        const item = getTikTokItem(video);
+        if (!item) return null;
+        // In some layouts, the sidebar is a sibling, in others it's a child.
+        return item.querySelector(SELECTORS.SIDEBAR) || 
+               (item.parentElement ? item.parentElement.querySelector(SELECTORS.SIDEBAR) : null);
+    }
 
     // -------- BUTTON FINDERS --------
 
@@ -28,21 +53,37 @@
     }
 
     function findLikeButton(video) {
-        const icons = document.querySelectorAll('[data-e2e="like-icon"]:not([data-pip-managed]), [data-e2e="browse-like-icon"]:not([data-pip-managed])');
-        if (!icons.length) return null;
+        const sidebar = getTikTokSidebar(video);
+        if (sidebar) {
+            const icon = sidebar.querySelector(SELECTORS.LIKE_ICON);
+            if (icon) return normalizeToButton(icon);
+        }
+        
+        const root = getTikTokItem(video) || document;
+        const icons = root.querySelectorAll(`${SELECTORS.LIKE_ICON}:not([data-pip-managed])`);
+        if (icons.length) {
+            const buttons = Array.from(icons).map(el => el.closest('button')).filter(Boolean);
+            return normalizeToButton(getClosestCandidate(video, buttons));
+        }
 
-        const buttons = [...icons].map(el => el.closest('button')).filter(Boolean);
-
-        return normalizeToButton(getClosestCandidate(video, buttons));
+        return null;
     }
 
     function findFavoriteButton(video) {
-        // TikTok keeps changing this. undefined-icon is common, but collect-icon is also used.
-        const icons = document.querySelectorAll('[data-e2e="undefined-icon"]:not([data-pip-managed])');
-        if (!icons.length) return null;
+        const sidebar = getTikTokSidebar(video);
+        if (sidebar) {
+            const icon = sidebar.querySelector(SELECTORS.FAV_ICON);
+            if (icon) return normalizeToButton(icon);
+        }
 
-        const buttons = [...icons].map(el => el.closest('button')).filter(Boolean);
-        return normalizeToButton(getClosestCandidate(video, buttons));
+        const root = getTikTokItem(video) || document;
+        const icons = root.querySelectorAll(`${SELECTORS.FAV_ICON}:not([data-pip-managed])`);
+        if (icons.length) {
+            const buttons = Array.from(icons).map(el => el.closest('button')).filter(Boolean);
+            return normalizeToButton(getClosestCandidate(video, buttons));
+        }
+
+        return null;
     }
 
     function getLikeButton(video) {
@@ -76,7 +117,11 @@
 
         const pressed = btn.getAttribute('aria-pressed');
         if (pressed === 'true') return true;
-        if (pressed === 'false') return false;
+        
+        // Red color fallback for Like from user HTML: #FE2C55
+        // (Not strictly necessary if aria-pressed is updated, but good for robust detection)
+        const path = btn.querySelector('path[fill="#FE2C55"], path[fill="#fe2c55"]');
+        if (path) return true;
 
         return false;
     }
@@ -103,42 +148,62 @@
         return false;
     }
 
+    // -------- LIVE / AD DETECTION --------
+
+    function detectIsLive(video) {
+        if (!video) return false;
+        const hasLiveTitle = !!document.querySelector(SELECTORS.LIVE_TITLE);
+        const videoIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
+        if (hasLiveTitle || videoIsLive) return true;
+        if (video.closest('a[target="tiktok_live_view_window"]')) return true;
+        return false;
+    }
+
+    function detectIsAd(video) {
+        const item = getTikTokItem(video);
+        return item ? !!item.querySelector(SELECTORS.AD_TAG) : false;
+    }
+
     // -------- STATE --------
 
     let lastBroadcastState = null;
 
-    const monitorState = (e) => {
-        // 1. Context Detection: Prioritize event target or passed element.
-        // This ensures the update is tied to the correct video during rapid swaps.
-        const targetVideo = (e instanceof HTMLVideoElement) ? e : 
-                           (e && e.target instanceof HTMLVideoElement) ? e.target : 
-                           getActiveVideo();
+    const monitorState = (e, forceBroadcast = false) => {
+        // PRIORITY: If in PiP, always target the PiP element.
+        const currentPiP = document.pictureInPictureElement;
+        
+        const targetVideo = currentPiP || 
+            (e instanceof HTMLVideoElement ? e :
+            (e && e.target instanceof HTMLVideoElement ? e.target :
+                getActiveVideo()));
 
         if (!targetVideo) return;
 
-        // 2. Ownership Filter: If in PiP, ONLY allow updates from the PiP video itself.
-        // This prevents background thumbnails/previews from hijacking the metadata.
-        const currentPiP = document.pictureInPictureElement;
-        if (currentPiP && targetVideo !== currentPiP) {
-            return;
+        // If video changed, clear cache
+        if (e && (e.type === 'play' || e.type === 'playing')) {
+            lastLikeVideo = null;
+            lastFavVideo = null;
+            cachedLikeBtn = null;
+            cachedFavBtn = null;
         }
 
-        // 3. Filter: Only ignore 'pause' during navigation to prevent flickering.
-        // 'Play' events are ALWAYS trusted as they signal a successful landing.
+        // Ownership filter: Suppress background scans unless forced (PiP request) or active PiP.
+        if (!currentPiP && !forceBroadcast) return;
+        if (currentPiP && targetVideo !== currentPiP) return;
+
         const playing = !targetVideo.paused;
         const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-        
-        if (isNavigating && !playing) {
-            return;
-        }
 
-        // Must be in PiP to broadcast
-        if (!document.pictureInPictureElement) return;
+        if (isNavigating && !playing) return;
 
         const liked = getLikeStatus(targetVideo);
         const favorited = getFavoriteStatus(targetVideo);
         const volume = Math.round(targetVideo.volume * 100);
         const muted = targetVideo.muted;
+        const isTikTokLive = detectIsLive(targetVideo);
+        const isAd = detectIsAd(targetVideo);
+
+        const hasFavorite = (isTikTokLive || isAd) ? false : !!getFavoriteButton(targetVideo);
 
         // Fast shallow comparison
         if (lastBroadcastState &&
@@ -146,31 +211,44 @@
             lastBroadcastState.favorited === favorited &&
             lastBroadcastState.playing === playing &&
             lastBroadcastState.volume === volume &&
-            lastBroadcastState.muted === muted) {
+            lastBroadcastState.muted === muted &&
+            lastBroadcastState.isTikTokLive === isTikTokLive &&
+            lastBroadcastState.hasFavorite === hasFavorite) {
             return;
         }
 
-        const state = { liked, favorited, playing, volume, muted };
+        const state = { liked, favorited, playing, volume, muted, isTikTokLive, hasFavorite };
         lastBroadcastState = state;
         document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
     };
 
-    // Global Capturing Listeners: Natural sync without per-video management overhead.
+    // Global Capturing Listeners
     VIDEO_STATE_EVENTS.forEach(evt => {
         document.addEventListener(evt, monitorState, { capture: true, passive: true });
     });
 
-    // Reset state when PiP enters so the UI gets a fresh update.
-    // Also connect structural observers so they only run during PiP.
     document.addEventListener('enterpictureinpicture', () => {
         lastBroadcastState = null;
+        lastLikeVideo = null;
+        lastFavVideo = null;
+        cachedLikeBtn = null;
+        cachedFavBtn = null;
         connectStructuralObservers();
-        requestAnimationFrame(monitorState);
+        
+        // Immediate sync upon entry
+        requestAnimationFrame(() => {
+            monitorInteractiveElements();
+            monitorState();
+        });
+        
+        // Safety secondary scan for slow DOMs
+        setTimeout(() => {
+            monitorInteractiveElements();
+            monitorState();
+        }, 150);
     });
 
-    // Clean up when PiP exits
     document.addEventListener('leavepictureinpicture', () => {
-
         likeBtnObserver?.disconnect();
         favBtnObserver?.disconnect();
         likeClickController?.abort();
@@ -192,9 +270,9 @@
 
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
-            lastBroadcastState = null; // Reset memory to force fresh update
+            lastBroadcastState = null;
             monitorInteractiveElements();
-            monitorState(newVideo);    // Sync immediately for the specific video
+            monitorState(newVideo);
         });
     }
 
@@ -212,109 +290,59 @@
     let favClickController = null;
     let lastScanTs = 0;
 
-    function monitorInteractiveElements() {
+    function setupButtonController(newBtn, lastBtn, type) {
+        if (newBtn === lastBtn) return lastBtn;
 
-        // Skip if PiP inactive
+        if (type === 'like') {
+            likeBtnObserver?.disconnect();
+            likeClickController?.abort();
+            if (newBtn) {
+                likeClickController = new AbortController();
+                newBtn.addEventListener('click', () => {
+                    setTimeout(monitorState, 60);
+                    setTimeout(monitorState, 400);
+                }, { passive: true, signal: likeClickController.signal });
+                likeBtnObserver = new MutationObserver(() => monitorState());
+                likeBtnObserver.observe(newBtn, { attributes: true, attributeFilter: ['aria-pressed', 'class'] });
+            }
+        } else {
+            favBtnObserver?.disconnect();
+            favClickController?.abort();
+            if (newBtn) {
+                favClickController = new AbortController();
+                newBtn.addEventListener('click', () => {
+                    setTimeout(monitorState, 60);
+                    setTimeout(monitorState, 400);
+                }, { passive: true, signal: favClickController.signal });
+                favBtnObserver = new MutationObserver(() => monitorState());
+                favBtnObserver.observe(newBtn, { attributes: true, attributeFilter: ['class', 'style'] });
+            }
+        }
+        
+        if (newBtn) monitorState();
+        return newBtn;
+    }
+
+    function monitorInteractiveElements() {
         if (!document.pictureInPictureElement) return;
 
         const now = performance.now();
         if (now - lastScanTs < 100) return;
         lastScanTs = now;
 
-        const video = getActiveVideo();
+        const video = document.pictureInPictureElement || getActiveVideo();
         if (!video) return;
 
-        const likeBtnNow = getLikeButton(video);
-        const favBtnNow = getFavoriteButton(video);
-
-        // ---------------- LIKE ----------------
-        if (likeBtnNow !== lastActiveLikeBtn) {
-
-            likeBtnObserver?.disconnect();
-            likeClickController?.abort();
-
-            lastActiveLikeBtn = likeBtnNow;
-            cachedLikeBtn = likeBtnNow;
-
-            if (cachedLikeBtn) {
-
-                likeClickController = new AbortController();
-
-                cachedLikeBtn.addEventListener('click', () => {
-                    setTimeout(monitorState, 60);
-                    setTimeout(monitorState, 400);
-                }, {
-                    passive: true,
-                    signal: likeClickController.signal
-                });
-
-                likeBtnObserver = new MutationObserver(() => {
-                    try {
-                        monitorState();
-                    } catch (e) { /* Expected: observer may fire after cleanup */ }
-                });
-
-                likeBtnObserver.observe(cachedLikeBtn, {
-                    attributes: true,
-                    attributeFilter: [
-                        'aria-pressed',
-                        'class'
-                    ]
-                });
-
-                monitorState();
-            }
-        }
-
-        // ---------------- FAVORITE ----------------
-        if (favBtnNow !== lastActiveFavBtn) {
-
-            favBtnObserver?.disconnect();
-            favClickController?.abort();
-
-            lastActiveFavBtn = favBtnNow;
-            cachedFavBtn = favBtnNow;
-
-            if (cachedFavBtn) {
-
-                favClickController = new AbortController();
-
-                cachedFavBtn.addEventListener('click', () => {
-                    setTimeout(monitorState, 60);
-                    setTimeout(monitorState, 400);
-                }, {
-                    passive: true,
-                    signal: favClickController.signal
-                });
-
-                favBtnObserver = new MutationObserver(() => {
-                    try {
-                        monitorState();
-                    } catch (e) { /* Expected: observer may fire after cleanup */ }
-                });
-
-                favBtnObserver.observe(cachedFavBtn, {
-                    attributes: true,
-                    attributeFilter: [
-                        'class',
-                        'style'
-                    ]
-                });
-
-                monitorState();
-            }
-        }
+        lastActiveLikeBtn = setupButtonController(getLikeButton(video), lastActiveLikeBtn, 'like');
+        lastActiveFavBtn = setupButtonController(getFavoriteButton(video), lastActiveFavBtn, 'favorite');
     }
 
     // -------- STRUCTURAL OBSERVERS --------
-    // These observers ONLY run while PiP is active (connected on
-    // enterpictureinpicture, disconnected on leavepictureinpicture).
 
     let rootObserver = null;
     let rootDebounceTimer = null;
 
     function connectStructuralObservers() {
-        // Connect root observer — only while PiP is active
         if (!rootObserver) {
             rootObserver = new MutationObserver(() => {
                 if (rootDebounceTimer) return;
@@ -324,82 +352,74 @@
                 }, 300);
             });
         }
-        try {
-            rootObserver.observe(document.body, { childList: true, subtree: true });
-        } catch (e) {
-            // Defensive: may fail inside some iframes
-        }
+        try { rootObserver.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
     }
 
     function disconnectStructuralObservers() {
         rootObserver?.disconnect();
-
-        if (rootDebounceTimer) {
-            clearTimeout(rootDebounceTimer);
-            rootDebounceTimer = null;
-        }
+        if (rootDebounceTimer) { clearTimeout(rootDebounceTimer); rootDebounceTimer = null; }
     }
 
     // -------- CONTROL EVENTS --------
 
+    async function handleRequestPip() {
+        const v = getActiveVideo();
+        if (!v) return;
+        try {
+            if (document.pictureInPictureElement === v) {
+                await document.exitPictureInPicture();
+            } else {
+                // FAST SYNC: Force a state report BEFORE browser PiP activation.
+                cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
+                monitorInteractiveElements();
+                monitorState(null, true);
+
+                if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
+                await v.requestPictureInPicture();
+            }
+        } catch (e) { }
+    }
+
+    function handleMute(action, video) {
+        const muteBtnCandidates = document.querySelectorAll(SELECTORS.MUTE_BTN);
+        const muteBtn = normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
+        if (muteBtn) {
+            if (video && (action === ACTIONS.MUTE ? !video.muted : video.muted)) muteBtn.click();
+        } else if (video) {
+            video.muted = (action === ACTIONS.MUTE);
+        }
+    }
+
     document.addEventListener('TikTok_Control_Event', (e) => {
         const { action, value, direction } = e.detail || {};
-        const video = getActiveVideo();
+        const video = document.pictureInPictureElement || getActiveVideo();
 
         switch (action) {
-            case ACTIONS.TOGGLE_LIKE: {
-                const btn = getLikeButton(video);
-                btn?.click();
+            case ACTIONS.TOGGLE_LIKE:
+                getLikeButton(video)?.click();
                 break;
-            }
-
-            case ACTIONS.TOGGLE_FAVORITE: {
-                const btn = getFavoriteButton(video);
-                btn?.click();
+            case ACTIONS.TOGGLE_FAVORITE:
+                getFavoriteButton(video)?.click();
                 break;
-            }
-
             case ACTIONS.TOGGLE_PLAY:
                 if (video) video.paused ? video.play() : video.pause();
                 break;
-
             case ACTIONS.PAUSE:
                 if (video) video.pause();
                 break;
-
             case ACTIONS.NAVIGATE_VIDEO: {
-                if (signalNavigation) signalNavigation();
-                const isNext = direction === 'next';
-                const key = isNext ? 'ArrowDown' : 'ArrowUp';
-                const eventOptions = { key, code: key, keyCode: isNext ? 40 : 38, bubbles: true, cancelable: true, view: window };
+                const key = direction === 'next' ? 'ArrowDown' : 'ArrowUp';
+                const eventOptions = { key, code: key, keyCode: direction === 'next' ? 40 : 38, bubbles: true, cancelable: true, view: window };
                 document.body.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
                 document.body.dispatchEvent(new KeyboardEvent('keyup', eventOptions));
-                // No timeout needed: global capture listeners will handle the update natively
                 break;
             }
-
             case ACTIONS.REQUEST_PIP:
-                (async () => {
-                    const v = getActiveVideo();
-                    if (!v) return;
-                    try {
-                        if (document.pictureInPictureElement === v) {
-                            await document.exitPictureInPicture();
-                        } else {
-                            monitorState();
-                            if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
-                            await v.requestPictureInPicture();
-                        }
-                    } catch (e) {
-                        // Expected: may fail if video is not eligible for PiP (e.g. DRM, removed from DOM)
-                    }
-                })();
+                handleRequestPip();
                 break;
-
             case ACTIONS.EXIT_PIP:
                 if (document.pictureInPictureElement) document.exitPictureInPicture();
                 break;
-
             case ACTIONS.FOCUS_PIP: {
                 const pipVideo = document.pictureInPictureElement;
                 if (!pipVideo) break;
@@ -408,68 +428,34 @@
                 }).catch(() => { });
                 break;
             }
-
             case ACTIONS.SEEK:
                 if (video && Number.isFinite(value)) {
                     let newTime = video.currentTime + value;
-                    if (Number.isFinite(video.duration)) {
-                        newTime = Math.max(0, Math.min(newTime, video.duration));
-                    }
+                    if (Number.isFinite(video.duration)) newTime = Math.max(0, Math.min(newTime, video.duration));
                     video.currentTime = newTime;
                 }
                 break;
-
-            case ACTIONS.MUTE: {
-                const muteBtnCandidates = document.querySelectorAll(
-                    '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
-                );
-                const muteBtn = normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
-
-                if (muteBtn) {
-                    if (video && !video.muted) {
-                        muteBtn.click();
-                    }
-                } else if (video) {
-                    video.muted = true;
-                }
+            case ACTIONS.MUTE:
+            case ACTIONS.UNMUTE:
+                handleMute(action, video);
                 break;
-            }
-
-            case ACTIONS.UNMUTE: {
-                const unmuteBtnCandidates = document.querySelectorAll(
-                    '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
-                );
-                const unmuteBtn = normalizeToButton(getClosestCandidate(video, unmuteBtnCandidates));
-
-                if (unmuteBtn) {
-                    if (video && video.muted) {
-                        unmuteBtn.click();
-                    }
-                } else if (video) {
-                    video.muted = false;
-                }
-                break;
-            }
-
             case ACTIONS.SET_VOLUME:
                 if (video && Number.isFinite(value)) {
                     const vol = Math.max(0, Math.min(1, value / 100));
-                    if (vol > 0 && video.muted) {
-                        video.muted = false;
-                    }
+                    if (vol > 0 && video.muted) video.muted = false;
                     video.volume = vol;
                 }
                 break;
-
             case ACTIONS.CHECK_STATUS:
-                // Force a fresh scan when UI asks for status
-                cachedLikeBtn = null;
-                cachedFavBtn = null;
-                lastLikeVideo = null;
-                lastFavVideo = null;
+                cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
                 monitorInteractiveElements();
                 monitorState();
                 break;
         }
     });
+
+    if (document.pictureInPictureElement) {
+        monitorInteractiveElements();
+        requestAnimationFrame(() => monitorState());
+    }
 })();
