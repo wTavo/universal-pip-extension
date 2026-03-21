@@ -17,9 +17,6 @@
                 // Clear trigger flag after activation
                 setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
             },
-            onExit: () => {
-                // Handled globally
-            },
             metadataCollector: (video) => {
                 return {
                     platform: 'tiktok',
@@ -35,7 +32,6 @@
 
         // Initial state sync handled globally by PiPFloatingButton manager
     }
-
 
     // --- Bridge Injection (Shared) ---
     function injectBridge() {

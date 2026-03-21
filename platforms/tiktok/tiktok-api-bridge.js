@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, signalNavigation } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -152,10 +152,13 @@
 
     function detectIsLive(video) {
         if (!video) return false;
-        const hasLiveTitle = !!document.querySelector(SELECTORS.LIVE_TITLE);
         const videoIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-        if (hasLiveTitle || videoIsLive) return true;
+        if (videoIsLive) return true;
         if (video.closest('a[target="tiktok_live_view_window"]')) return true;
+        // Search for live title relative to the video's item first, fallback to global
+        const item = getTikTokItem(video);
+        const searchRoot = item || document;
+        if (searchRoot.querySelector(SELECTORS.LIVE_TITLE)) return true;
         return false;
     }
 
@@ -179,12 +182,17 @@
 
         if (!targetVideo) return;
 
-        // If video changed, clear cache
+        // If video changed, clear cache (only when a DIFFERENT video starts playing)
         if (e && (e.type === 'play' || e.type === 'playing')) {
-            lastLikeVideo = null;
-            lastFavVideo = null;
-            cachedLikeBtn = null;
-            cachedFavBtn = null;
+            const eventVideo = e.target || e;
+            if (eventVideo !== lastLikeVideo) {
+                lastLikeVideo = null;
+                cachedLikeBtn = null;
+            }
+            if (eventVideo !== lastFavVideo) {
+                lastFavVideo = null;
+                cachedFavBtn = null;
+            }
         }
 
         // Ownership filter: Suppress background scans unless forced (PiP request) or active PiP.
@@ -222,10 +230,17 @@
         document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
     };
 
-    // Global Capturing Listeners
-    VIDEO_STATE_EVENTS.forEach(evt => {
-        document.addEventListener(evt, monitorState, { capture: true, passive: true });
-    });
+    // Capturing Listeners — added/removed with PiP lifecycle to avoid work when PiP is inactive
+    function addVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.addEventListener(evt, monitorState, { capture: true, passive: true });
+        });
+    }
+    function removeVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.removeEventListener(evt, monitorState, { capture: true });
+        });
+    }
 
     document.addEventListener('enterpictureinpicture', () => {
         lastBroadcastState = null;
@@ -233,6 +248,7 @@
         lastFavVideo = null;
         cachedLikeBtn = null;
         cachedFavBtn = null;
+        addVideoStateListeners();
         connectStructuralObservers();
         
         // Immediate sync upon entry
@@ -249,6 +265,7 @@
     });
 
     document.addEventListener('leavepictureinpicture', () => {
+        removeVideoStateListeners();
         likeBtnObserver?.disconnect();
         favBtnObserver?.disconnect();
         likeClickController?.abort();
@@ -271,6 +288,8 @@
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
             lastBroadcastState = null;
+            disconnectStructuralObservers();
+            connectStructuralObservers();
             monitorInteractiveElements();
             monitorState(newVideo);
         });
@@ -293,32 +312,40 @@
     function setupButtonController(newBtn, lastBtn, type) {
         if (newBtn === lastBtn) return lastBtn;
 
-        if (type === 'like') {
-            likeBtnObserver?.disconnect();
-            likeClickController?.abort();
-            if (newBtn) {
-                likeClickController = new AbortController();
-                newBtn.addEventListener('click', () => {
-                    setTimeout(monitorState, 60);
-                    setTimeout(monitorState, 400);
-                }, { passive: true, signal: likeClickController.signal });
-                likeBtnObserver = new MutationObserver(() => monitorState());
-                likeBtnObserver.observe(newBtn, { attributes: true, attributeFilter: ['aria-pressed', 'class'] });
+        const observer = (type === 'like') ? likeBtnObserver : favBtnObserver;
+        const controller = (type === 'like') ? likeClickController : favClickController;
+        const attrFilter = (type === 'like') ? ['aria-pressed', 'class'] : ['class', 'style', 'fill'];
+
+        observer?.disconnect();
+        controller?.abort();
+
+        if (newBtn) {
+            const newController = new AbortController();
+            // Single fallback timeout; MutationObserver is the primary state detector
+            newBtn.addEventListener('click', () => {
+                setTimeout(monitorState, 250);
+            }, { passive: true, signal: newController.signal });
+
+            const newObserver = new MutationObserver(() => monitorState());
+            // Like: aria-pressed changes on the button itself → no subtree needed
+            // Favorite: React may swap SVG children entirely → subtree + childList required
+            const observeOpts = (type === 'like')
+                ? { attributes: true, attributeFilter: attrFilter }
+                : { attributes: true, attributeFilter: attrFilter, subtree: true, childList: true };
+            newObserver.observe(newBtn, observeOpts);
+
+            if (type === 'like') {
+                likeBtnObserver = newObserver;
+                likeClickController = newController;
+            } else {
+                favBtnObserver = newObserver;
+                favClickController = newController;
             }
         } else {
-            favBtnObserver?.disconnect();
-            favClickController?.abort();
-            if (newBtn) {
-                favClickController = new AbortController();
-                newBtn.addEventListener('click', () => {
-                    setTimeout(monitorState, 60);
-                    setTimeout(monitorState, 400);
-                }, { passive: true, signal: favClickController.signal });
-                favBtnObserver = new MutationObserver(() => monitorState());
-                favBtnObserver.observe(newBtn, { attributes: true, attributeFilter: ['class', 'style'] });
-            }
+            if (type === 'like') { likeBtnObserver = null; likeClickController = null; }
+            else { favBtnObserver = null; favClickController = null; }
         }
-        
+
         if (newBtn) monitorState();
         return newBtn;
     }
@@ -330,7 +357,7 @@
         if (now - lastScanTs < 100) return;
         lastScanTs = now;
 
-        const video = document.pictureInPictureElement || getActiveVideo();
+        const video = document.pictureInPictureElement;
         if (!video) return;
 
         lastActiveLikeBtn = setupButtonController(getLikeButton(video), lastActiveLikeBtn, 'like');
@@ -352,7 +379,11 @@
                 }, 300);
             });
         }
-        try { rootObserver.observe(document.body, { childList: true, subtree: true }); } catch (e) {}
+        // Observe the narrowest useful container instead of document.body
+        const pipVideo = document.pictureInPictureElement || getActiveVideo();
+        const item = pipVideo ? getTikTokItem(pipVideo) : null;
+        const observeTarget = item?.parentElement || item || document.body;
+        try { rootObserver.observe(observeTarget, { childList: true, subtree: true }); } catch (e) {}
     }
 
     function disconnectStructuralObservers() {
@@ -449,7 +480,7 @@
             case ACTIONS.CHECK_STATUS:
                 cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
                 monitorInteractiveElements();
-                monitorState();
+                monitorState(null, true);
                 break;
         }
     });
