@@ -5,6 +5,7 @@
     window.__YOUTUBE_PIP_INJECT_LOADED__ = true;
 
     let currentLiked = false;
+    let currentIsLive = false;
     // --- UI Listeners and state handled by PiPFloatingButton manager ---
 
     // --- PiP State Listeners (Shared) ---
@@ -18,18 +19,13 @@
                 // Handled globally
             },
             metadataCollector: (video) => {
-                const isLive = video.duration === Infinity || !Number.isFinite(video.duration) ||
-                    !!document.querySelector('.ytp-live') ||
-                    !!document.querySelector('[data-layer="badge-label"]') ||
-                    window.location.href.includes('/live');
-
                 return {
                     platform: 'youtube',
                     isShorts: window.location.href.includes('/shorts/'),
                     supportsNavigation: window.location.href.includes('/shorts/'),
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
-                    isLive: isLive,
+                    isLive: currentIsLive,
                     liked: currentLiked
                 };
             }
@@ -64,19 +60,18 @@
 
     // --- Bridge Communication ---
     document.addEventListener('YouTube_State_Update', (e) => {
-        const { liked, playing, volume, muted } = e.detail || {};
+        const { liked, playing, volume, muted, isLive } = e.detail || {};
 
         if (typeof liked === 'boolean') currentLiked = liked;
+        if (typeof isLive === 'boolean') currentIsLive = isLive;
 
-        if (window.PiPUtils && window.PiPUtils.safeSendMessage) {
-            if (typeof liked === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_LIKE_STATE', liked });
-            }
-            if (typeof playing === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_PLAYBACK_STATE', playing });
-            }
+        if (window.PiPUtils?.safeSendMessage) {
+            const send = (type, payload) => window.PiPUtils.safeSendMessage({ type, ...payload });
+
+            if (typeof liked === 'boolean') send('UPDATE_LIKE_STATE', { liked });
+            if (typeof playing === 'boolean') send('UPDATE_PLAYBACK_STATE', { playing });
             if (typeof volume === 'number' || typeof muted === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_VOLUME_STATE', volume, muted });
+                send('UPDATE_VOLUME_STATE', { volume, muted });
             }
         }
     });
