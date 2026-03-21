@@ -104,12 +104,18 @@
         return getClosestCandidate(video, candidates);
     }
 
+    // -------- LIVE DETECTION --------
+
     function detectIsLive(video) {
         if (!video) return false;
         const durationIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-        const hasLiveBadge = !!document.querySelector(SELECTORS.LIVE_BADGE);
+        if (durationIsLive) return true;
         const urlIsLive = window.location.href.includes('/live');
-        return durationIsLive || hasLiveBadge || urlIsLive;
+        if (urlIsLive) return true;
+        // Search for live badge relative to the player first, fallback to global
+        const player = getPlayer(video);
+        const searchRoot = player || document;
+        return !!searchRoot.querySelector(SELECTORS.LIVE_BADGE);
     }
 
     // -------- STATE --------
@@ -159,27 +165,38 @@
         document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: state }));
     };
 
-    // Global Capturing Listeners: Catch state changes as they happen naturally.
-    VIDEO_STATE_EVENTS.forEach(evt => {
-        document.addEventListener(evt, monitorState, { capture: true, passive: true });
-    });
+    // Capturing Listeners — added/removed with PiP lifecycle to avoid work when PiP is inactive
+    function addVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.addEventListener(evt, monitorState, { capture: true, passive: true });
+        });
+    }
+    function removeVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.removeEventListener(evt, monitorState, { capture: true });
+        });
+    }
 
     // Reset state when PiP enters so the UI gets a fresh update.
     // Also connect structural observers so they only run during PiP.
     document.addEventListener('enterpictureinpicture', () => {
         lastBroadcastState = null;
+        addVideoStateListeners();
         connectStructuralObservers();
-        requestAnimationFrame(monitorState);
-    });
 
-    let lastActiveLikeBtn = null;
-    let likeBtnObserver = null;
-    let likeClickController = null;
-    let lastScanTs = 0;
+        // Immediate sync upon entry
+        requestAnimationFrame(monitorState);
+
+        // Safety secondary scan for slow DOMs
+        setTimeout(() => {
+            monitorInteractiveElements();
+            monitorState();
+        }, 150);
+    });
 
     // Clean up when PiP exits
     document.addEventListener('leavepictureinpicture', () => {
-
+        removeVideoStateListeners();
         likeBtnObserver?.disconnect();
         likeClickController?.abort();
         disconnectStructuralObservers();
@@ -194,12 +211,20 @@
 
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
-            lastBroadcastState = null; // Reset memory to force fresh update
-            monitorState(newVideo);    // Sync immediately for the specific video
+            lastBroadcastState = null;
+            disconnectStructuralObservers();
+            connectStructuralObservers();
+            monitorInteractiveElements();
+            monitorState(newVideo);
         });
     }
 
     // -------- INTERACTIVE OBSERVERS --------
+
+    let lastActiveLikeBtn = null;
+    let likeBtnObserver = null;
+    let likeClickController = null;
+    let lastScanTs = 0;
 
     function setupButtonController(config) {
         const { getElement, onUpdate, attributeFilter = ['class', 'aria-pressed'] } = config;
@@ -219,9 +244,9 @@
 
             const update = () => { if (document.pictureInPictureElement) onUpdate(); };
 
+            // Single fallback timeout; MutationObserver is the primary state detector
             lastActiveLikeBtn.addEventListener('click', () => {
-                setTimeout(update, 60);
-                setTimeout(update, 400);
+                setTimeout(update, 250);
             }, { passive: true, signal });
 
             likeBtnObserver = new MutationObserver(update);
@@ -289,8 +314,12 @@
                 }, 300);
             });
         }
+        // Observe the narrowest useful container instead of document.body
+        const pipVideo = document.pictureInPictureElement || getActiveVideo();
+        const playerContainer = pipVideo ? getPlayer(pipVideo) : null;
+        const observeTarget = playerContainer?.parentElement || playerContainer || document.body;
         try {
-            rootObserver.observe(document.body, { childList: true, subtree: true });
+            rootObserver.observe(observeTarget, { childList: true, subtree: true });
         } catch (e) {
             // Defensive: may fail inside some iframes
         }
@@ -317,8 +346,8 @@
         btn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
         btn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
         btn.click();
-        setTimeout(monitorState, 60);
-        setTimeout(monitorState, 400);
+        // Single fallback timeout; MutationObserver in setupButtonController handles rapid detection
+        setTimeout(monitorState, 250);
     }
 
     async function handleRequestPip() {
@@ -399,6 +428,7 @@
             case ACTIONS.CHECK_STATUS:
                 cachedLikeBtn = null;
                 lastLikeVideo = null;
+                lastBroadcastState = null;
                 manageLikeController();
                 monitorState();
                 break;

@@ -4,19 +4,15 @@
     if (window.__YOUTUBE_PIP_INJECT_LOADED__) return;
     window.__YOUTUBE_PIP_INJECT_LOADED__ = true;
 
+    // --- UI Listeners and state handled by PiPFloatingButton manager ---
     let currentLiked = false;
     let currentIsLive = false;
-    // --- UI Listeners and state handled by PiPFloatingButton manager ---
-
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
         window.PiPUtils.trackPiPState({
             onEnter: (video) => {
                 // Clear trigger flag after activation
                 setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
-            },
-            onExit: () => {
-                // Handled globally
             },
             metadataCollector: (video) => {
                 return {
