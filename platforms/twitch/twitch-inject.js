@@ -4,6 +4,8 @@
     if (window.__TWITCH_PIP_INJECT_LOADED__) return;
     window.__TWITCH_PIP_INJECT_LOADED__ = true;
 
+    let currentIsLive = false;
+
     // --- UI Listeners and state handled by PiPFloatingButton manager ---
 
     // --- PiP State Listeners (Shared) ---
@@ -18,15 +20,13 @@
                 setInactive();
             },
             metadataCollector: (video) => {
-                const isLive = video.duration === Infinity || !Number.isFinite(video.duration);
-
                 return {
                     platform: 'twitch',
-                    isShorts: false, // Twitch doesn't have Shorts natively handled in this player context
+                    isShorts: false,
                     supportsNavigation: false,
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
-                    isLive: isLive
+                    isLive: currentIsLive
                 };
             }
         });
@@ -60,14 +60,16 @@
 
     // --- Bridge Communication ---
     document.addEventListener('Twitch_State_Update', (e) => {
-        const { playing, volume, muted } = e.detail || {};
+        const { playing, volume, muted, isLive } = e.detail || {};
 
-        if (window.PiPUtils && window.PiPUtils.safeSendMessage) {
-            if (typeof playing === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_PLAYBACK_STATE', playing });
-            }
+        if (typeof isLive === 'boolean') currentIsLive = isLive;
+
+        if (window.PiPUtils?.safeSendMessage) {
+            const send = (type, payload) => window.PiPUtils.safeSendMessage({ type, ...payload });
+
+            if (typeof playing === 'boolean') send('UPDATE_PLAYBACK_STATE', { playing });
             if (typeof volume === 'number' || typeof muted === 'boolean') {
-                window.PiPUtils.safeSendMessage({ type: 'UPDATE_VOLUME_STATE', volume, muted });
+                send('UPDATE_VOLUME_STATE', { volume, muted });
             }
         }
     });
