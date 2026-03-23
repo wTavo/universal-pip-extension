@@ -17,6 +17,7 @@
                 // Clear trigger flag after activation
                 setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
             },
+            controlEventName: 'TikTok_Control_Event',
             metadataCollector: (video) => {
                 return {
                     platform: 'tiktok',
@@ -32,6 +33,7 @@
 
         // Initial state sync handled globally by PiPFloatingButton manager
     }
+
 
     // --- Bridge Injection (Shared) ---
     function injectBridge() {
@@ -105,6 +107,8 @@
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
             'NAVIGATE_VIDEO': (msg) => {
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
                 return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
             },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),

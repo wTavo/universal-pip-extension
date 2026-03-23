@@ -22,6 +22,15 @@
         LIVE_BADGE: '.ytp-live, [data-layer="badge-label"]'
     };
 
+    function getPageType(url = window.location.href) {
+        if (url.includes('/watch')) return 'WATCH';
+        if (url.includes('/shorts/')) return 'SHORTS';
+        if (url.includes('/live')) return 'LIVE';
+        return 'OTHER';
+    }
+
+    let lastPageType = getPageType();
+
     // -------- BUTTON FINDERS --------
 
     let lastLikeVideo = null;
@@ -181,6 +190,7 @@
     // Also connect structural observers so they only run during PiP.
     document.addEventListener('enterpictureinpicture', () => {
         lastBroadcastState = null;
+        lastPageType = getPageType(); // Ensure context is fresh on entry
         addVideoStateListeners();
         connectStructuralObservers();
 
@@ -294,8 +304,33 @@
         }
     }
 
+    // YouTube-specific: catch navigation EARLY to exit PiP or signal grace period
+    document.addEventListener('yt-navigate-start', (e) => {
+        const nextUrl = e.detail?.url;
+        if (!nextUrl || !document.pictureInPictureElement) return;
+
+        const nextPageType = getPageType(nextUrl);
+        const typeChanged = lastPageType !== nextPageType;
+
+        if (nextPageType === 'OTHER' || typeChanged) {
+            // Immediate exit for major changes
+            document.exitPictureInPicture().catch(() => { });
+            // Signal background immediately to prevent ghost UI on next page
+            try { chrome.runtime.sendMessage({ type: 'PIP_DEACTIVATED', force: true }); } catch (err) { }
+        } else {
+            // Signal background to enter grace period (e.g., Watch -> Watch)
+            // This prevents the volume panel from being hidden and the icon from resetting
+            // when the browser natively exits PiP during DOM replacement.
+            if (signalNavigation) signalNavigation();
+            try { chrome.runtime.sendMessage({ type: 'SIGNAL_NAVIGATION' }); } catch (err) { }
+        }
+    });
+
     // YouTube-specific: re-scan on SPA navigation + re-check Shorts container
     document.addEventListener('yt-navigate-finish', () => {
+        const currentPageType = getPageType();
+        lastPageType = currentPageType; // Sync for next navigation
+
         if (document.pictureInPictureElement) {
             setupShortsObserver();
             monitorInteractiveElements();

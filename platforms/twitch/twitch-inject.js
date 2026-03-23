@@ -19,6 +19,7 @@
             onExit: () => {
                 setInactive();
             },
+            controlEventName: 'Twitch_Control_Event',
             metadataCollector: (video) => {
                 return {
                     platform: 'twitch',
@@ -34,17 +35,6 @@
         // Initial state sync handled globally by PiPFloatingButton manager
     }
 
-    let _ignoreNextPopstate = false;
-    // Exit PiP on browser back/forward navigation
-    window.addEventListener('popstate', () => {
-        if (_ignoreNextPopstate) {
-            _ignoreNextPopstate = false;
-            return;
-        }
-        if (document.pictureInPictureElement) {
-            document.dispatchEvent(new CustomEvent('Twitch_Control_Event', { detail: { action: 'EXIT_PIP' } }));
-        }
-    });
 
     // --- Bridge Injection ---
     function injectBridge() {
@@ -105,8 +95,8 @@
             'TOGGLE_MUTE_VIDEO': (msg) => ({ action: msg.muted ? 'MUTE' : 'UNMUTE' }),
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
             'NAVIGATE_VIDEO': (msg) => {
-                _ignoreNextPopstate = true;
-                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
                 return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
             },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),

@@ -45,6 +45,19 @@ let _volumeDragActive = false;
 let _navigationGraceTabId = null;
 let _navigationGraceTimer = null;
 
+function startNavigationGrace(tabId, durationMs = 3000) {
+    if (!tabId) return;
+    _navigationGraceTabId = tabId;
+    if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
+    _navigationGraceTimer = setTimeout(() => {
+        if (_navigationGraceTabId === tabId) {
+            _navigationGraceTabId = null;
+            _navigationGraceTimer = null;
+        }
+    }, durationMs);
+    log.info(`Navigation grace period started for tab ${tabId} (${durationMs}ms)`);
+}
+
 // Track tabs where the control panel was shown to ensure surgical cleanup when PiP ends
 const _activeSessionTabIds = new Set();
 
@@ -611,16 +624,17 @@ async function handlePipActivated(message, sender, sendResponse) {
     sendResponse({ success: true });
 }
 
+async function handleSignalNavigation(message, sender, sendResponse) {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (tabId && tabId === pipState.tabId) {
+        startNavigationGrace(tabId, 3000);
+    }
+    sendResponse({ success: true });
+}
+
 async function handleNavigateVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
-        // Set navigation grace period
-        _navigationGraceTabId = pipState.tabId;
-        if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
-        _navigationGraceTimer = setTimeout(() => {
-            _navigationGraceTabId = null;
-            _navigationGraceTimer = null;
-        }, 2000); // 2 second grace period for video swap
-
+        startNavigationGrace(pipState.tabId, 2500); // Slightly shorter for manual nav
         await safeSendMessage(pipState.tabId, {
             type: 'NAVIGATE_VIDEO',
             direction: message.direction
@@ -714,7 +728,20 @@ async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
 
 async function handlePipDeactivated(message, sender, sendResponse) {
     if (pipState.active) {
-        log.info('PiP deactivated by tab:', sender.tab?.id, 'Origin was:', pipState.tabId);
+        const actingTabId = sender.tab?.id;
+        
+        // GRACE PERIOD CHECK: If the tab that caused this exit is currently navigating,
+        // ignore the deactivation. The browser natively exits PiP when the video element 
+        // is removed/replaced during SPA navigation, but we want to stay active if 
+        // the new video will take over.
+        // We SKIP this check if the message is 'forced' (e.g., from a popstate event).
+        if (!message.force && actingTabId && actingTabId === _navigationGraceTabId) {
+            log.info('Ignoring PiP deactivation during navigation grace period for tab:', actingTabId);
+            sendResponse({ success: true });
+            return;
+        }
+
+        log.info('PiP deactivated by tab:', actingTabId, 'Origin was:', pipState.tabId);
 
         // Notify the origin tab to hide its UI
         await savePipState({ active: false, tabId: null });
@@ -1043,18 +1070,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return true;
 
         case 'SIGNAL_NAVIGATION':
-            if (sender.tab && sender.tab.id) {
-                // Activate navigation grace period for this tab
-                _navigationGraceTabId = sender.tab.id;
-                if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
-                _navigationGraceTimer = setTimeout(() => {
-                    _navigationGraceTabId = null;
-                    _navigationGraceTimer = null;
-                }, 2000); // 2 second grace period
-                log.info('SIGNAL_NAVIGATION received from tab:', sender.tab.id);
-            }
-            sendResponse({ success: true });
-            return false;
+            handleSignalNavigation(message, sender, sendResponse);
+            return true;
 
         case 'PING':
             handlePing(message, sender, sendResponse);

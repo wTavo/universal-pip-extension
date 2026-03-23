@@ -39,7 +39,7 @@
             try {
                 document.documentElement.removeAttribute('data-pip-navigating');
             } catch (e) {}
-        }, 1500); // 1.5s window to swap videos
+        }, 2500); // 2.5s window to swap videos
     }
 
     function isNavigating() {

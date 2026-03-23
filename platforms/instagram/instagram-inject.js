@@ -17,6 +17,7 @@
             onExit: (video) => {
                 // Handled globally
             },
+            controlEventName: 'Instagram_Control_Event',
             metadataCollector: (video) => {
                 const isLive = window.location.pathname.includes('/live/');
 
@@ -34,17 +35,6 @@
         });
     }
 
-    let _ignoreNextPopstate = false;
-    // Exit PiP on browser back/forward navigation
-    window.addEventListener('popstate', () => {
-        if (_ignoreNextPopstate) {
-            _ignoreNextPopstate = false;
-            return;
-        }
-        if (document.pictureInPictureElement) {
-            document.dispatchEvent(new CustomEvent('Instagram_Control_Event', { detail: { action: 'EXIT_PIP' } }));
-        }
-    });
 
     // --- PiP Button & Selector Ball (via universal manager) ---
     window.PiPFloatingButton?.init({
@@ -111,8 +101,8 @@
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
             'NAVIGATE_VIDEO': (msg) => {
-                _ignoreNextPopstate = true;
-                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
                 return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
             },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),

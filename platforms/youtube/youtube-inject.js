@@ -14,6 +14,7 @@
                 // Clear trigger flag after activation
                 setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
             },
+            controlEventName: 'YouTube_Control_Event',
             metadataCollector: (video) => {
                 return {
                     platform: 'youtube',
@@ -30,17 +31,6 @@
         // Initial state sync handled globally by PiPFloatingButton manager
     }
 
-    let _ignoreNextPopstate = false;
-    // Exit PiP on browser back/forward navigation
-    window.addEventListener('popstate', () => {
-        if (_ignoreNextPopstate) {
-            _ignoreNextPopstate = false;
-            return;
-        }
-        if (document.pictureInPictureElement) {
-            document.dispatchEvent(new CustomEvent('YouTube_Control_Event', { detail: { action: 'EXIT_PIP' } }));
-        }
-    });
 
     // --- Bridge Injection ---
     function injectBridge() {
@@ -101,8 +91,8 @@
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'NAVIGATE_VIDEO': (msg) => {
-                _ignoreNextPopstate = true;
-                setTimeout(() => { _ignoreNextPopstate = false; }, 1000);
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
                 return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
             },
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),

@@ -593,8 +593,34 @@
         },
 
         trackPiPState: function (options) {
-            const { onEnter, onExit, metadataCollector } = options;
+            const { onEnter, onExit, metadataCollector, controlEventName } = options;
             window.PiPUtils._metadataCollector = metadataCollector;
+
+            // Centralized History Navigation Support (Back/Forward arrows)
+            // This ensures PiP closes and UI clears when the user uses browser navigation.
+            const handlePopState = () => {
+                if (window.__pipIgnoreNextPopstate) {
+                    window.__pipIgnoreNextPopstate = false;
+                    return;
+                }
+
+                if (document.pictureInPictureElement) {
+                    // 1. Dispatch exit event for the platform bridge to handle cleanup
+                    const eventName = controlEventName || 'PIP_Control_Event';
+                    document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
+                    // 2. Natively exit
+                    document.exitPictureInPicture().catch(() => {});
+                }
+
+                // 3. Force deactivation signal to background.
+                // This bypasses the 'logic suppression' in the leavepictureinpicture listener below.
+                if (window.PiPFloatingButton?.isActive?.()) {
+                    window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
+                    window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
+                }
+            };
+
+            window.addEventListener('popstate', handlePopState);
 
             document.addEventListener('enterpictureinpicture', (e) => {
                 const video = e.target;
@@ -622,6 +648,7 @@
             }, true); // Capture
 
             document.addEventListener('leavepictureinpicture', (e) => {
+                const video = e.target;
                 // Debounce exit to allow for "video swapping" (e.g. TikTok scroll)
                 // This prevents the UI from flickering (Hide -> Show) if a new video picks up PiP immediately.
                 setTimeout(() => {
@@ -631,20 +658,26 @@
                         return;
                     }
 
+                    // CHECK FOR MANUAL EXIT: If the video element is still connected to the DOM,
+                    // the user likely clicked the 'X' or the extension button. This is NOT 
+                    // a navigation-related removal, so we should NOT suppress it.
+                    const isManualExit = video && video.isConnected;
+
                     // CHECK NAVIGATION STATE: If we are in the middle of a swap (scroll/buttons)
                     // don't tell the background that PiP ended. This keeps the panel alive.
                     // We check BOTH the BridgeUtils internal state AND the DOM attribute bridge.
                     const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
                                        document.documentElement.hasAttribute('data-pip-navigating');
 
-                    if (isNavigating) {
-                        log.info('Navigation in progress - suppressing PiP deactivation signal.');
+                    if (isNavigating && !isManualExit) {
+                        log.info('Natural navigation exit detected - suppressing PiP deactivation signal.');
                         return;
                     }
 
-                    // Real Exit
+                    // Real Exit (or manual exit during navigation)
                     window.PiPUtils.safeSendMessage({
-                        type: 'PIP_DEACTIVATED'
+                        type: 'PIP_DEACTIVATED',
+                        force: isManualExit // Ensure background honors manual exits immediately
                     });
 
                     if (onExit) onExit(e.target);
