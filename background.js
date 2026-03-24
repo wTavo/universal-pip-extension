@@ -833,27 +833,8 @@ async function handleSetNavExpanded(message, sender, sendResponse) {
 
 // handleTogglePlay removed in favor of handleStateToggle
 
-async function handleExecuteCommand(message, sender, sendResponse) {
-    const { command, scope, tabId } = message;
-    await processVisibilityCommand(command, scope || 'global', tabId || null);
-    sendResponse({ success: true });
-}
-
 async function handleVideoDetected(message, sender, sendResponse) {
     // Placeholder for telemetry if needed
-    sendResponse({ success: true });
-}
-
-async function handleActivateSelectionMode(message, sender, sendResponse) {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (tabId) {
-        await safeSendMessage(tabId, { type: MSG.START_SELECTION_MODE });
-    }
-    sendResponse({ success: true });
-}
-
-async function handleStopSelectionModeGlobal(message, sender, sendResponse) {
-    await syncToRelevantTabs({ type: MSG.STOP_SELECTION_MODE });
     sendResponse({ success: true });
 }
 

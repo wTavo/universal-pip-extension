@@ -5,8 +5,6 @@
     if (window.__pipSelectorLoaded) return;
     window.__pipSelectorLoaded = true;
 
-    window.__pipSelectorLoaded = true;
-
     log.info('Logic loaded.');
 
     let isSelecting = false;

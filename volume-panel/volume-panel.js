@@ -73,16 +73,20 @@
         },
 
         sendMsg: (msg, cb) => {
-            try {
-                const runtime = (window.chrome && chrome.runtime) ? chrome.runtime : (window.browser && browser.runtime ? browser.runtime : null);
-                if (runtime && runtime.sendMessage) {
-                    runtime.sendMessage(msg, (res) => { if (typeof cb === 'function') cb(res); });
-                } else if (typeof cb === 'function') {
-                    cb();
+            if (window.PiPUtils?.safeSendMessage) {
+                window.PiPUtils.safeSendMessage(msg, cb);
+            } else {
+                try {
+                    const runtime = (window.chrome && chrome.runtime) ? chrome.runtime : (window.browser && browser.runtime ? browser.runtime : null);
+                    if (runtime && runtime.sendMessage) {
+                        runtime.sendMessage(msg, (res) => { if (typeof cb === 'function') cb(res); });
+                    } else if (typeof cb === 'function') {
+                        cb();
+                    }
+                } catch (e) {
+                    log.warn('sendMessage failed', e);
+                    if (typeof cb === 'function') cb();
                 }
-            } catch (e) {
-                log.warn('sendMessage failed', e);
-                if (typeof cb === 'function') cb();
             }
         }
     };
