@@ -88,7 +88,9 @@
     };
 
     const Handlers = {
-        PING: (msg, resp) => resp({ pong: true }),
+        PANEL_PING: (msg, resp) => {
+            resp({ alive: true, panelActive: true });
+        },
 
         SHOW_VOLUME_PANEL: (msg, resp) => {
             const state = msg.state || {};
@@ -105,9 +107,6 @@
             resp({ success: true });
         },
 
-        PANEL_PING: (msg, resp) => {
-            resp({ pong: true, panelActive: true });
-        },
 
         HIDE_VOLUME_PANEL: (msg, resp) => {
             destroyUI();

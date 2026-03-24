@@ -22,6 +22,78 @@ const DEFAULT_PIP_STATE = Object.freeze({
     domainExceptions: {}
 });
 
+// Centralized Message Types
+const MSG = {
+    // UI Visibility
+    GET_UI_STATE: 'GET_UI_STATE',
+    EXECUTE_COMMAND: 'EXECUTE_COMMAND',
+    HIDE_EXTENSION_UI: 'HIDE_EXTENSION_UI',
+    SHOW_EXTENSION_UI: 'SHOW_EXTENSION_UI',
+    SYNC_SESSION_VISIBILITY: 'SYNC_SESSION_VISIBILITY',
+    GET_UI_VISIBILITY: 'GET_UI_VISIBILITY',
+    
+    // PiP Lifecycle
+    PIP_ACTIVATED: 'PIP_ACTIVATED',
+    PIP_DEACTIVATED: 'PIP_DEACTIVATED',
+    PIP_SESSION_STARTED: 'PIP_SESSION_STARTED',
+    VALIDATE_PIP_STATUS: 'VALIDATE_PIP_STATUS',
+    SIGNAL_NAVIGATION: 'SIGNAL_NAVIGATION',
+    REQUEST_EARLY_PANEL: 'REQUEST_EARLY_PANEL',
+    REQUEST_PIP_STATE: 'REQUEST_PIP_STATE',
+    GET_PIP_STATE: 'GET_PIP_STATE',
+    CHECK_PIP_STATUS: 'CHECK_PIP_STATUS',
+    EXIT_PIP: 'EXIT_PIP',
+    VISIBILITY_PING: 'VISIBILITY_PING',
+    PANEL_PING: 'PANEL_PING',
+    
+    // Controls
+    TOGGLE_PLAY: 'TOGGLE_PLAY',
+    TOGGLE_MUTE: 'TOGGLE_MUTE',
+    TOGGLE_MUTE_VIDEO: 'TOGGLE_MUTE_VIDEO',
+    TOGGLE_LIKE: 'TOGGLE_LIKE',
+    TOGGLE_FAVORITE: 'TOGGLE_FAVORITE',
+    SEEK_VIDEO: 'SEEK_VIDEO',
+    NAVIGATE_VIDEO: 'NAVIGATE_VIDEO',
+    SET_VOLUME: 'SET_VOLUME',
+    SET_VOLUME_LIVE: 'SET_VOLUME_LIVE',
+    CHANGE_VOLUME: 'CHANGE_VOLUME',
+    PAUSE_VIDEO: 'PAUSE_VIDEO',
+    FOCUS_PIP: 'FOCUS_PIP',
+
+    // Relay-compatible aliases for content scripts
+    LIKE_VIDEO: 'LIKE_VIDEO',
+    FAVORITE_VIDEO: 'FAVORITE_VIDEO',
+    
+    // State Sync
+    UPDATE_FAVORITE_STATE: 'UPDATE_FAVORITE_STATE',
+    UPDATE_LIKE_STATE: 'UPDATE_LIKE_STATE',
+    UPDATE_PLAYBACK_STATE: 'UPDATE_PLAYBACK_STATE',
+    UPDATE_TIKTOK_LIVE_STATE: 'UPDATE_TIKTOK_LIVE_STATE',
+    UPDATE_VOLUME_STATE: 'UPDATE_VOLUME_STATE',
+    SET_NAV_EXPANDED: 'SET_NAV_EXPANDED',
+    SYNC_NAV_EXPANDED: 'SYNC_NAV_EXPANDED',
+    SYNC_VOLUME_UI: 'SYNC_VOLUME_UI',
+    SYNC_LIKE_UI: 'SYNC_LIKE_UI',
+    SYNC_FAVORITE_UI: 'SYNC_FAVORITE_UI',
+    SYNC_PLAYBACK_UI: 'SYNC_PLAYBACK_UI',
+    SYNC_TIKTOK_LIVE_UI: 'SYNC_TIKTOK_LIVE_UI',
+    UPDATE_MUTE_STATE: 'UPDATE_MUTE_STATE',
+    SYNC_PIP_STATE: 'SYNC_PIP_STATE',
+    
+    // Drag/Position
+    SYNC_DRAG_POSITION: 'SYNC_DRAG_POSITION',
+    GET_DRAG_POSITION: 'GET_DRAG_POSITION',
+    
+    // Misc
+    PING: 'PING',
+    START_SELECTION_MODE: 'START_SELECTION_MODE',
+    STOP_SELECTION_MODE: 'STOP_SELECTION_MODE',
+    ACTIVATE_SELECTION_MODE: 'ACTIVATE_SELECTION_MODE',
+    STOP_SELECTION_MODE_GLOBAL: 'STOP_SELECTION_MODE_GLOBAL',
+    HIDE_VOLUME_PANEL: 'HIDE_VOLUME_PANEL',
+    SHOW_VOLUME_PANEL: 'SHOW_VOLUME_PANEL'
+};
+
 // Estado en memoria (caché)
 let pipState = { ...DEFAULT_PIP_STATE };
 
@@ -61,24 +133,35 @@ function startNavigationGrace(tabId, durationMs = 3000) {
 // Track tabs where the control panel was shown to ensure surgical cleanup when PiP ends
 const _activeSessionTabIds = new Set();
 
+async function handleSyncDragPosition(message, sender, sendResponse) {
+    if (message.pos) {
+        await chrome.storage.local.set({ global_pip_btn_position: message.pos });
+        sendResponse({ success: true });
+    } else {
+        sendResponse({ success: false });
+    }
+}
+
+async function handleGetDragPosition(message, sender, sendResponse) {
+    const res = await chrome.storage.local.get('global_pip_btn_position');
+    sendResponse({ pos: res.global_pip_btn_position || null });
+}
+
 // Helper para guardar estado
 async function savePipState(newState) {
-    let changed = false;
-    // serialize writes to prevent lost updates
     _saveLock = _saveLock.then(async () => {
-        // Recupera la versión más reciente desde storage para comparar
-        const stored = await chrome.storage.local.get('pipState');
-        const current = stored.pipState || pipState || { ...DEFAULT_PIP_STATE };
+        // Use in-memory cache as base (kept synced by chrome.storage.onChanged)
+        const current = pipState || { ...DEFAULT_PIP_STATE };
 
-        // Merge sin mutar current
         if (newState.domainExceptions) {
             newState.domainExceptions = sanitizeDomainExceptions(newState.domainExceptions);
         }
+        
         const merged = { ...current, ...newState };
-        // Deep-compare domainExceptions efficiently
+        
+        // Deep-compare target fields to avoid redundant disk writes
         const domainEqual = isDomainExceptionsEqual(current.domainExceptions || {}, merged.domainExceptions || {});
-        // Check shallow primitive differences
-        let hasChanges = !domainEqual || Object.keys(current).some(k => {
+        const hasChanges = !domainEqual || Object.keys(newState).some(k => {
             if (k === 'domainExceptions') return false;
             return current[k] !== merged[k];
         });
@@ -88,10 +171,9 @@ async function savePipState(newState) {
         }
 
         await chrome.storage.local.set({ pipState: merged });
-        pipState = merged;
+        pipState = merged; // Immediate cache update
         if (!pipState.domainExceptions) pipState.domainExceptions = {};
         log.info('State saved (Changes detected):', newState);
-        changed = true;
         return { changed: true, state: merged };
     }).catch(err => {
         log.error('savePipState error:', err && err.message);
@@ -99,6 +181,30 @@ async function savePipState(newState) {
     });
 
     return _saveLock;
+}
+
+/**
+ * High-level helper to update state and optionally broadcast to relevant tabs.
+ * Reduces boilerplate across command handlers.
+ *
+ * @param {object} delta - The partial state object to merge into pipState.
+ * @param {object|function|null} syncMsg - Message to send to relevant tabs, or a function that returns a message.
+ * @param {string|null} relayType - Optional message type to relay back to the PiP origin tab (pipState.tabId).
+ * @param {object|null} relayPayload - Optional payload to include with the relay message.
+ */
+async function updateAndSync(delta, syncMsg = null, relayType = null, relayPayload = {}) {
+    const result = await savePipState(delta);
+    if (result.changed) {
+        // 1. Send relay message to the PiP origin tab if specified
+        if (relayType && pipState.tabId) {
+            await safeSendMessage(pipState.tabId, { type: relayType, ...relayPayload });
+        }
+        // 2. Broadcast sync message to other relevant tabs
+        if (syncMsg) {
+            await syncToRelevantTabs(syncMsg);
+        }
+    }
+    return result;
 }
 
 // Helper para recuperar y VALIDAR estado
@@ -159,8 +265,6 @@ function getBaseDomain(hostname) {
     const parts = hostname.split('.');
 
     // Common multi-part TLDs that require taking 3 parts instead of 2
-    // HEURISTIC: This list is partial. If issues arise with specific ccTLDs, add them here.
-    // For a robust solution, consider migrating to a Public Suffix List (PSL) library in the build step.
     const multiPartTlds = [
         'co.uk', 'co.jp', 'co.kr', 'com.au', 'com.br', 'com.mx', 'com.tr', 'com.sg',
         'net.au', 'org.uk', 'ac.uk', 'edu.au', 'gov.uk', 'gov.au'
@@ -174,8 +278,19 @@ function getBaseDomain(hostname) {
     }
 
     if (parts.length <= 2) return hostname;
-    // Simple heuristic: take last 2 parts
     return parts.slice(-2).join('.');
+}
+
+/**
+ * Safely extracts the base domain from a tab object
+ */
+function getTabDomain(tab) {
+    if (!tab || !tab.url) return null;
+    try {
+        return getBaseDomain(new URL(tab.url).hostname);
+    } catch (e) {
+        return null;
+    }
 }
 
 function sanitizeDomainExceptions(obj = {}) {
@@ -214,106 +329,105 @@ function canReceivePipMessages(tab) {
 }
 
 // ========================================
+// Generic State Helpers
+// ========================================
+
+async function handleStateToggle(field, syncType, relayType, message, sender, sendResponse) {
+    const newVal = message[field] !== undefined ? !!message[field] : !pipState[field];
+    log.info(`Toggle ${field}:`, newVal);
+    await updateAndSync(
+        { [field]: newVal },
+        { type: syncType, [field]: newVal },
+        relayType,
+        { [field]: newVal }
+    );
+    if (sendResponse) sendResponse({ success: true, [field]: newVal });
+}
+
+async function handleStateUpdate(field, syncType, message, sender, sendResponse) {
+    if (sender.tab && sender.tab.id === pipState.tabId) {
+        const val = message[field];
+        await updateAndSync({ [field]: val }, { type: syncType, [field]: val });
+    }
+    if (sendResponse) sendResponse({ success: true });
+}
+
+async function validateTabPipStatus(tabId, url) {
+    const isPrime = url.includes('primevideo.com');
+    try {
+        const response = await safeSendMessage(tabId, { type: MSG.VALIDATE_PIP_STATUS });
+        if (!response) return false;
+        if (response.error) return isPrime; // Lenient for Prime during reloads
+        if (!response.isActive) return false;
+        if (response.metadata) await savePipState(response.metadata);
+        return true;
+    } catch (e) {
+        return isPrime;
+    }
+}
+
+// ========================================
 // Message Handler Functions
 // ========================================
 
-async function handleGetUiState(message, sender, sendResponse) {
-    const state = await getPipState();
-    sendResponse({ uiVisible: state.uiVisible });
-}
+// Eliminated redundant handleGetUiState - callers can use handleRequestPipState
 
 async function handleExecuteCommand(message, sender, sendResponse) {
-    // Determine domain from message (popup) or sender (content script)
-    let domain = null;
+    const command = message.command;
     const targetUrl = message.tabUrl || (sender.tab ? sender.tab.url : null);
 
-    if (targetUrl) {
-        try {
-            domain = getBaseDomain(new URL(targetUrl).hostname);
-        } catch (e) { }
+    if (command === 'show_ui' || command === 'hide_ui') {
+        await processVisibilityCommand(command, message.scope, targetUrl);
+    } else if (command === 'focus_pip') {
+        const state = await getPipState();
+        if (state.active && state.tabId) {
+            await safeSendMessage(state.tabId, { type: MSG.FOCUS_PIP });
+        }
+    } else if (command === 'close_pip') {
+        await handleExitPip({}, null, null);
     }
 
-    // Only update global state if scope is global
-    if (message.scope === 'global') {
-        if (message.command === 'hide_ui') {
-            await savePipState({ uiVisible: false, domainExceptions: {} });
-            log.info('Global UI hidden via popup (Exceptions cleared)');
-        } else if (message.command === 'show_ui') {
-            await savePipState({ uiVisible: true, domainExceptions: {} });
-            log.info('Global UI shown via popup (Exceptions cleared)');
-        }
-    } else {
-        // Platform specific: Add exception for this domain
-        if (domain) {
-            const newExceptions = { ...pipState.domainExceptions };
-
-            if (message.command === 'hide_ui') {
-                // domain is already normalized by getBaseDomain() above
-                newExceptions[domain] = false;
-                await savePipState({ domainExceptions: newExceptions });
-                log.info(`UI hidden for ${domain} (Exception added)`);
-            } else if (message.command === 'show_ui') {
-                // domain is already normalized by getBaseDomain() above
-                newExceptions[domain] = true;
-                await savePipState({ domainExceptions: newExceptions });
-                log.info(`UI shown for ${domain} (Exception added)`);
-            }
-        } else {
-            log.info(`Command ${message.command} executed in ${message.scope} mode (No domain found)`);
-        }
-    }
-
-    // Post-Command Broadcast
-    getPipState().then(async (updatedState) => {
-        log.info('Re-calculated Session Visibility Broadcast (Per-Tab)');
-
-        await syncToRelevantTabs((tab) => {
-            let originDomain = null;
-            try {
-                if (tab && tab.url) originDomain = getBaseDomain(new URL(tab.url).hostname);
-            } catch (err) { }
-
-            const isSessionVisible = calculateSessionVisibility(updatedState, originDomain);
-            return {
-                type: 'SYNC_SESSION_VISIBILITY',
-                visible: isSessionVisible,
-                effectiveDomain: originDomain, // Send calculated domain to content script
-                state: updatedState
-            };
-        });
-    });
-
-    // Respond to confirm execution (important for robust async calls)
-    sendResponse({ success: true });
+    if (sendResponse) sendResponse({ success: true });
 }
 
-function handleVideoDetected(message, sender, sendResponse) {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (tabId) {
-        safeSendMessage(tabId, {
-            type: 'SHOW_GLOBAL_PIP_BTN'
-        }, { frameId: 0 });
+/**
+ * Unified logic for showing/hiding UI (Global or Domain Exception)
+ */
+async function processVisibilityCommand(command, scope, targetUrl) {
+    const isVisible = command === 'show_ui';
+    const domain = getTabDomain({ url: targetUrl });
+
+    if (scope === 'global') {
+        await updateAndSync({ uiVisible: isVisible, domainExceptions: {} });
+        log.info(`Global UI ${isVisible ? 'shown' : 'hidden'} (Exceptions cleared)`);
+    } else if (domain) {
+        const newExceptions = { ...pipState.domainExceptions };
+        newExceptions[domain] = isVisible;
+        await updateAndSync({ domainExceptions: newExceptions });
+        log.info(`UI ${isVisible ? 'shown' : 'hidden'} for ${domain} (Exception added)`);
     }
-    return false;
+
+    // Broadcast recalculated sync message to all tabs
+    const updatedState = await getPipState();
+    await syncToRelevantTabs((tab) => {
+        const tabDomain = getTabDomain(tab);
+
+        const isSessionVisible = calculateSessionVisibility(updatedState, tabDomain);
+        return {
+            type: MSG.SYNC_SESSION_VISIBILITY,
+            visible: isSessionVisible,
+            effectiveDomain: tabDomain,
+            state: updatedState
+        };
+    });
 }
 
 function handleActivateSelectionMode(message, sender, sendResponse) {
     const tabId = sender.tab ? sender.tab.id : null;
     if (tabId) {
         safeSendMessage(tabId, {
-            type: 'START_SELECTION_MODE'
+            type: MSG.START_SELECTION_MODE
         });
-    }
-    return false;
-}
-
-function handlePipStateSync(message, sender, sendResponse) {
-    const tabId = sender.tab ? sender.tab.id : null;
-    if (tabId) {
-        safeSendMessage(tabId, {
-            type: 'SYNC_PIP_STATE',
-            active: message.type === 'PIP_ACTIVATED'
-        }, { frameId: 0 });
     }
     return false;
 }
@@ -321,60 +435,28 @@ function handlePipStateSync(message, sender, sendResponse) {
 function handleStopSelectionModeGlobal(message, sender, sendResponse) {
     const tabId = sender.tab ? sender.tab.id : null;
     if (tabId) {
-        safeSendMessage(tabId, { type: 'STOP_SELECTION_MODE' });
+        safeSendMessage(tabId, { type: MSG.STOP_SELECTION_MODE });
     }
     return false;
 }
 
-function handleExitPip(message, sender, sendResponse) {
-    if (pipState.tabId) {
+async function handleExitPip(message, sender, sendResponse) {
+    if (pipState.active && pipState.tabId) {
+        log.info('Executing exit PiP for tab:', pipState.tabId);
+        
         // If exiting from a different tab, pause the video first as per user request
-        if (sender.tab && sender.tab.id !== pipState.tabId) {
+        if (sender && sender.tab && sender.tab.id !== pipState.tabId) {
             safeSendMessage(pipState.tabId, { type: 'PAUSE_VIDEO' });
         }
-        safeSendMessage(pipState.tabId, { type: 'EXIT_PIP' });
+        await safeSendMessage(pipState.tabId, { type: MSG.EXIT_PIP });
     } else {
         log.warn('No target tab ID for EXIT_PIP');
     }
-    const MAX_SIZE = 50;
-
-    if (Object.keys(injectionFailures).length >= MAX_SIZE) {
-        // Remove entries older than TTL first
-        for (const d in injectionFailures) {
-            if (now - injectionFailures[d].lastAttempt > TTL) {
-                delete injectionFailures[d];
-            }
-        }
-        // If still too big, delete the oldest entries (or just the first ones found)
-        if (Object.keys(injectionFailures).length >= MAX_SIZE) {
-            const keys = Object.keys(injectionFailures);
-            // Sort by lastAttempt to remove oldest first? Or just slice. Slice is faster/simpler.
-            keys.slice(0, 25).forEach(k => delete injectionFailures[k]);
-        }
-    }
+    
+    if (sendResponse) sendResponse({ success: true });
 }
 
-function recordInjectionFailure(domain) {
-    const now = Date.now();
-    const TTL = 60 * 60 * 1000; // 1 hour
-
-    pruneInjectionFailures();
-
-    const entry = injectionFailures[domain] || { count: 0, lastAttempt: 0 };
-
-    // Reset count if TTL expired
-    if (now - entry.lastAttempt > TTL) {
-        entry.count = 0;
-    }
-
-    entry.count++;
-    entry.lastAttempt = now;
-    injectionFailures[domain] = entry;
-
-    if (entry.count >= 3) {
-        log.warn(`High injection failure rate for ${domain} (${entry.count}). Possible CSP block.`);
-    }
-}
+// Injection failure tracking removed (Manifest v3 handles content script lifecycle automatically)
 
 // Inyectar el script de control en una pestaña específica
 // Inyectar el script de control en una pestaña específica (Simplificado para Manifest)
@@ -383,15 +465,18 @@ async function injectControlPanel(tabId, tabUrl) {
         if (!canReceivePipMessages({ url: tabUrl })) return false;
 
         // With Manifest injection, we just need to verify the script is alive
-        const response = await safeSendMessage(tabId, { type: 'PANEL_PING' });
-        if (response && !response.error && response.panelActive) {
+        // Also verify the panel is ready via PANEL_PING
+        const [visRes, panelRes] = await Promise.all([
+            safeSendMessage(tabId, { type: MSG.VISIBILITY_PING }),
+            safeSendMessage(tabId, { type: MSG.PANEL_PING })
+        ]);
+
+        if (visRes?.alive && panelRes?.alive) {
             return true;
         }
 
-        // If Ping fails, the content script might not be ready yet (e.g. initial load)
-        // Since it's in the manifest, it WILL load. We return true to allow the follow-up
-        // showControlPanel call to proceed after its small delay.
-        return true;
+        // Return true if at least the visibility listener is ready
+        return !!(visRes && !visRes.error && visRes.alive);
     } catch (err) {
         return false;
     }
@@ -401,16 +486,11 @@ async function injectControlPanel(tabId, tabUrl) {
 
 // Proactive initialization NOT needed for content scripts in manifest.
 // The browser handles it for us on load.
-async function initializeAllTabs() {
-    log.info('Supported tabs will be initialized via manifest.');
-}
-
-// Call on load (for developer reloads)
-initializeAllTabs();
+// Manifest v3 handles content script lifecycle automatically.
+// The browser handles it for us on load.
 
 chrome.runtime.onInstalled.addListener((details) => {
     log.info('Extension installed/updated:', details.reason);
-    initializeAllTabs();
 });
 
 // chrome.runtime.onStartup REMOVED - Manifest content scripts handle injection automatically.
@@ -456,24 +536,25 @@ async function showControlPanel(tabId, overrideVisibility = null) {
     lastPanelShow.set(tabId, now);
     _activeSessionTabIds.add(tabId); // Track tab for surgical cleanup
     safeSendMessage(tabId, {
-        type: 'SHOW_VOLUME_PANEL',
+        type: MSG.SHOW_VOLUME_PANEL,
         state: freshState,
         sessionVisible: isVisible // Pass calculated visibility
     });
 }
 
 /**
- * Surgically removes the volume panel from all tabs where it was displayed during the session.
+ * Unifies global cleanup when a PiP session ends (manual exit, native close, or tab removal).
  */
-async function cleanupAllSessionPanels() {
-    if (_activeSessionTabIds.size === 0) return;
-
-    log.info(`Surgically cleaning up panels from ${_activeSessionTabIds.size} tabs.`);
-    const cleanupPromises = Array.from(_activeSessionTabIds).map(id =>
-        safeSendMessage(id, { type: 'HIDE_VOLUME_PANEL' })
-    );
-
-    await Promise.allSettled(cleanupPromises);
+async function performPipGlobalCleanup() {
+    log.info('Performing global PiP cleanup.');
+    
+    // 1. Broadcast HIDE to all tracked/relevant tabs
+    await syncToRelevantTabs({ type: MSG.HIDE_VOLUME_PANEL });
+    
+    // 2. Reset global state
+    await updateAndSync({ active: false, tabId: null });
+    
+    // 3. Clear session-specific tracking
     _activeSessionTabIds.clear();
 }
 
@@ -519,12 +600,17 @@ async function syncToRelevantTabs(message, options = {}) {
         const excludeId = options.excludeTabId;
         const targetIds = new Set();
 
-        // 1. Always include the active PiP tab if there is one
+        // 1. Include all tabs that have shown the control panel during this session
+        _activeSessionTabIds.forEach(id => {
+            if (!excludeId || id !== excludeId) targetIds.add(id);
+        });
+
+        // 2. Safety: Include the active PiP origin tab
         if (pipState.tabId && (!excludeId || pipState.tabId !== excludeId)) {
             targetIds.add(pipState.tabId);
         }
 
-        // 2. Add currently visible (active) tabs across all windows
+        // 3. Add currently visible (active) tabs across all windows
         const activeTabs = await chrome.tabs.query({ active: true });
         for (const tab of activeTabs) {
             if (canReceivePipMessages(tab) && (!excludeId || tab.id !== excludeId)) {
@@ -552,13 +638,27 @@ async function syncToRelevantTabs(message, options = {}) {
     }
 }
 
-// ========================================
 // Async Message Handlers (from second listener)
 // ========================================
 
+async function handleExitPip(message, sender, sendResponse) {
+    if (pipState.active && pipState.tabId) {
+        log.info('Executing manual exit for tab:', pipState.tabId);
+        const oldTabId = pipState.tabId;
+        
+        // 1. Send exit command directly to origin tab (bridge handles the actual video exit)
+        await safeSendMessage(oldTabId, { type: MSG.EXIT_PIP });
+
+        // 2. Perform global cleanup
+        await performPipGlobalCleanup();
+    }
+    
+    if (sendResponse) sendResponse({ success: true });
+}
+
 async function handlePipActivated(message, sender, sendResponse) {
     const oldTabId = pipState.tabId;
-    const newTabId = sender.tab ? sender.tab.id : null;
+    const newTabId = sender.tab?.id;
 
     if (!newTabId) {
         log.warn('PIP_ACTIVATED without sender.tab - ignoring');
@@ -566,60 +666,42 @@ async function handlePipActivated(message, sender, sendResponse) {
         return;
     }
 
-    let originDomain = message.originDomain;
-    if (!originDomain && sender.tab && sender.tab.url) {
-        try {
-            originDomain = getBaseDomain(new URL(sender.tab.url).hostname);
-        } catch (e) { }
-    }
+    const originDomain = message.originDomain || getTabDomain(sender.tab);
 
     const newState = {
+        ...DEFAULT_PIP_STATE,
+        ...message, // Merge incoming properties
         active: true,
         tabId: newTabId,
-        volume: typeof message.volume === "number" ? message.volume : pipState.volume,
-        muted: typeof message.muted === "boolean" ? message.muted : pipState.muted,
-        liked: typeof message.liked === "boolean" ? message.liked : pipState.liked,
-        favorited: typeof message.favorited === "boolean" ? message.favorited : pipState.favorited,
         navExpanded: true,
-        pipMode: message.pipMode || 'main',
         isSelectorMode: message.pipMode === 'manual',
-        isExtensionTriggered: !!message.isExtensionTriggered,
-        platform: message.platform || 'unknown',
-        isShorts: message.isShorts || false,
-        supportsNavigation: !!message.supportsNavigation,
-        playing: typeof message.playing === 'boolean' ? message.playing : true,
-        isLive: typeof message.isLive === 'boolean' ? message.isLive : false,
         isTikTokLive: (message.platform === 'tiktok' && !!message.isLive),
-        hasFavorite: true,
-        originDomain: originDomain
+        originDomain
     };
-    await savePipState(newState);
+    
+    await updateAndSync(newState, { 
+        type: MSG.PIP_SESSION_STARTED, 
+        state: newState,
+        isExtensionTriggered: !!message.isExtensionTriggered
+    });
 
-    await syncToRelevantTabs({ type: 'SYNC_NAV_EXPANDED', expanded: true });
+    log.info('Signaling other tabs to sync navigation state');
+    await syncToRelevantTabs({ type: MSG.SYNC_NAV_EXPANDED, expanded: true });
 
-    log.info('Signaling other tabs to pause (PiP moved to', newTabId, ')');
-    await syncToRelevantTabs({
-        type: 'PIP_SESSION_STARTED',
-        originTabId: newTabId
-    }); // Broadcast to everyone, including sender, for UI icon sync
-
-    // Explicitly show the control panel on the origin tab.
-    // This is required because handlePipActivated doesn't automatically trigger UI updates
-    // on the sender tab. We ensure the script is injected first.
     if (newTabId && sender.tab?.url) {
         (async () => {
             const success = await injectControlPanel(newTabId, sender.tab.url);
-            if (success) {
-                showControlPanel(newTabId);
-            }
+            if (success) showControlPanel(newTabId);
         })();
     }
 
     if (oldTabId && oldTabId !== newTabId) {
         log.info('PiP session moved from tab', oldTabId, 'to', newTabId);
-        // Explicitly tell the old tab to hide its PiP UI (ghost UI bug fix)
-        await safeSendMessage(oldTabId, { type: 'HIDE_VOLUME_PANEL' });
+        await safeSendMessage(oldTabId, { type: MSG.HIDE_VOLUME_PANEL });
     }
+
+    // Explicit state sync signal
+    safeSendMessage(newTabId, { type: MSG.SYNC_PIP_STATE, active: true }, { frameId: 0 });
 
     sendResponse({ success: true });
 }
@@ -636,75 +718,15 @@ async function handleNavigateVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
         startNavigationGrace(pipState.tabId, 2500); // Slightly shorter for manual nav
         await safeSendMessage(pipState.tabId, {
-            type: 'NAVIGATE_VIDEO',
+            type: MSG.NAVIGATE_VIDEO,
             direction: message.direction
         });
     }
     sendResponse({ success: true });
 }
 
-async function handleToggleLike(message, sender, sendResponse) {
-    log.info('TOGGLE_LIKE received. Target Tab ID:', pipState.tabId);
-    const newLiked = !pipState.liked;
-    await savePipState({ liked: newLiked });
-
-    await syncToRelevantTabs({ type: 'SYNC_LIKE_UI', liked: newLiked });
-
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'LIKE_VIDEO'
-        });
-    } else {
-        log.warn('No target tab ID for LIKE_VIDEO');
-    }
-    sendResponse({ success: true });
-}
-
-async function handleToggleFavorite(message, sender, sendResponse) {
-    const newFavorited = !pipState.favorited;
-    await savePipState({ favorited: newFavorited });
-
-    await syncToRelevantTabs({ type: 'SYNC_FAVORITE_UI', favorited: newFavorited });
-
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'FAVORITE_VIDEO'
-        });
-    } else {
-        log.warn('No target tab ID for FAVORITE_VIDEO');
-    }
-    sendResponse({ success: true });
-}
-
-async function handleUpdateFavoriteState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        const result = await savePipState({ favorited: message.favorited });
-        if (result.changed) {
-            await syncToRelevantTabs({ type: 'SYNC_FAVORITE_UI', favorited: message.favorited });
-        }
-    }
-    sendResponse({ success: true });
-}
-
-async function handleUpdateLikeState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        const result = await savePipState({ liked: message.liked });
-        if (result.changed) {
-            await syncToRelevantTabs({ type: 'SYNC_LIKE_UI', liked: message.liked });
-        }
-    }
-    sendResponse({ success: true });
-}
-
-async function handleUpdatePlaybackState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        const result = await savePipState({ playing: message.playing });
-        if (result.changed) {
-            await syncToRelevantTabs({ type: 'SYNC_PLAYBACK_UI', playing: message.playing });
-        }
-    }
-    sendResponse({ success: true });
-}
+// Note: specific handlers for Liked, Favorited, and Playback are now handled 
+// via handleStateToggle and handleStateUpdate in the dispatcher.
 
 async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
@@ -712,15 +734,11 @@ async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
         if (typeof message.isTikTokLive === 'boolean') updates.isTikTokLive = message.isTikTokLive;
         if (typeof message.hasFavorite === 'boolean') updates.hasFavorite = message.hasFavorite;
         
-        await savePipState(updates);
-        
-        // Broadcast to UI: ALWAYS sync for TikTok. 
-        // This ensures that if the background state was reset but the panel UI is still out of sync,
-        // it gets corrected immediately by the bridge's first evaluation.
-        await syncToRelevantTabs({ 
-            type: 'SYNC_TIKTOK_LIVE_UI', 
-            isTikTokLive: pipState.isTikTokLive, 
-            hasFavorite: pipState.hasFavorite 
+        // Ensure we send the NEW values in the sync message
+        await updateAndSync(updates, { 
+            type: MSG.SYNC_TIKTOK_LIVE_UI, 
+            isTikTokLive: updates.isTikTokLive !== undefined ? updates.isTikTokLive : pipState.isTikTokLive, 
+            hasFavorite: updates.hasFavorite !== undefined ? updates.hasFavorite : pipState.hasFavorite 
         });
     }
     sendResponse({ success: true });
@@ -730,111 +748,59 @@ async function handlePipDeactivated(message, sender, sendResponse) {
     if (pipState.active) {
         const actingTabId = sender.tab?.id;
         
-        // GRACE PERIOD CHECK: If the tab that caused this exit is currently navigating,
-        // ignore the deactivation. The browser natively exits PiP when the video element 
-        // is removed/replaced during SPA navigation, but we want to stay active if 
-        // the new video will take over.
-        // We SKIP this check if the message is 'forced' (e.g., from a popstate event).
         if (!message.force && actingTabId && actingTabId === _navigationGraceTabId) {
             log.info('Ignoring PiP deactivation during navigation grace period for tab:', actingTabId);
             sendResponse({ success: true });
             return;
         }
 
-        log.info('PiP deactivated by tab:', actingTabId, 'Origin was:', pipState.tabId);
-
-        // Notify the origin tab to hide its UI
-        await savePipState({ active: false, tabId: null });
-        await cleanupAllSessionPanels(); // Targeted surgical cleanup
-        await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
-    } else {
-        log.info('Ignored PIP_DEACTIVATED - PiP already inactive');
+        log.info('PiP deactivated by event from tab:', actingTabId);
+        await performPipGlobalCleanup();
     }
     sendResponse({ success: true });
 }
 
 async function handleSetVolume(message, sender, sendResponse) {
-    _volumeDragActive = false; // Drag ended — allow bridge feedback again
-    const newVolume = message.volume;
-    const stateUpdate = { volume: newVolume };
+    _volumeDragActive = false; 
+    const newVolume = Math.max(0, Math.min(100, message.volume));
+    log.info('Set volume:', newVolume);
 
-    // If user sets a positive volume, treat it as an implicit unmute
-    // so pipState stays consistent and all panels show the correct mute button state.
+    const stateUpdate = { volume: newVolume };
     if (newVolume > 0 && pipState.muted) {
         stateUpdate.muted = false;
     }
 
-    await savePipState(stateUpdate);
+    const result = await updateAndSync(
+        stateUpdate,
+        { type: MSG.SYNC_VOLUME_UI, volume: newVolume, muted: stateUpdate.muted !== undefined ? stateUpdate.muted : pipState.muted },
+        MSG.CHANGE_VOLUME,
+        { volume: newVolume }
+    );
 
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'CHANGE_VOLUME',
-            volume: newVolume
-        });
+    if (result.state.muted === false) {
+        await syncToRelevantTabs({ type: MSG.UPDATE_MUTE_STATE, muted: false });
     }
 
-    // Notify all panels of the mute state change if we just implicitly unmuted
-    if (stateUpdate.muted === false) {
-        await syncToRelevantTabs({ type: 'UPDATE_MUTE_STATE', muted: false });
-    }
-
-    sendResponse({ success: true });
-}
-
-async function handleTogglePlay(message, sender, sendResponse) {
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'TOGGLE_PLAY'
-        });
-    }
     sendResponse({ success: true });
 }
 
 async function handleToggleMute(message, sender, sendResponse) {
-    const newMuted = !pipState.muted;
-    await savePipState({ muted: newMuted });
-
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'TOGGLE_MUTE_VIDEO',
-            muted: newMuted
-        });
-    }
-
-    await syncToRelevantTabs({ type: 'UPDATE_MUTE_STATE', muted: newMuted });
-
+    const newMuted = message.muted !== undefined ? !!message.muted : !pipState.muted;
+    log.info('Toggle mute:', newMuted);
+    await updateAndSync(
+        { muted: newMuted },
+        { type: MSG.UPDATE_MUTE_STATE, muted: newMuted },
+        MSG.TOGGLE_MUTE_VIDEO,
+        { muted: newMuted }
+    );
     sendResponse({ success: true, muted: newMuted });
-}
-
-async function handleExitPip(message, sender, sendResponse) {
-    log.info('handleExitPip requested by tab:', sender.tab?.id);
-    if (pipState.tabId) {
-        await safeSendMessage(pipState.tabId, {
-            type: 'EXIT_PIP'
-        });
-    } else {
-        log.warn('No active PiP tab known to exit.');
-    }
-
-    // Send immediate response
-    if (sendResponse) sendResponse({ success: true });
 }
 
 async function handleSeekVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
         await safeSendMessage(pipState.tabId, {
-            type: 'SEEK_VIDEO',
+            type: MSG.SEEK_VIDEO,
             offset: message.offset
-        });
-    }
-    sendResponse({ success: true });
-}
-
-async function handleUpdateAdState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        await syncToRelevantTabs({
-            type: 'UPDATE_AD_STATE',
-            isAd: message.isAd
         });
     }
     sendResponse({ success: true });
@@ -842,7 +808,6 @@ async function handleUpdateAdState(message, sender, sendResponse) {
 
 async function handleUpdateVolumeState(message, sender, sendResponse) {
     if (sender.tab && sender.tab.id === pipState.tabId) {
-        // Skip save during active slider drag to prevent feedback loop log spam
         if (_volumeDragActive) {
             sendResponse({ success: true });
             return;
@@ -852,57 +817,57 @@ async function handleUpdateVolumeState(message, sender, sendResponse) {
         if (message.volume !== undefined) newState.volume = message.volume;
         if (message.muted !== undefined) newState.muted = message.muted;
 
-        const result = await savePipState(newState);
-
-        if (result.changed && (message.volume !== undefined || message.muted !== undefined)) {
-            await syncToRelevantTabs({
-                type: "SYNC_VOLUME_UI",
-                volume: message.volume,
-                muted: message.muted
-            });
-        }
-    }
-    sendResponse({ success: true });
-}
-
-async function handleSetNavExpanded(message, sender, sendResponse) {
-    const result = await savePipState({ navExpanded: message.expanded });
-    if (result.changed) {
-        log.info('Nav Expanded set to:', message.expanded);
-        await syncToRelevantTabs({
-            type: 'SYNC_NAV_EXPANDED',
-            expanded: message.expanded
+        await updateAndSync(newState, {
+            type: MSG.SYNC_VOLUME_UI,
+            volume: message.volume,
+            muted: message.muted
         });
     }
     sendResponse({ success: true });
 }
 
-async function handleRequestPipState(message, sender, sendResponse) {
-    const s = await getPipState();
-    let effectiveUiVisible = s.uiVisible;
-
-    // Reliability: ui-visibility-listener sending this message at document_start 
-    // is a definitive signal that the tab context has been reset (Hard Reload).
-    if (sender.tab && sender.frameId === 0) {
-        // State cleanup if necessary (none needed now for successfullyInjected)
-    }
-
-    try {
-        const senderTab = sender.tab;
-        if (senderTab && senderTab.url) {
-            const domain = getBaseDomain(new URL(senderTab.url).hostname);
-            if (s.domainExceptions && s.domainExceptions[domain] !== undefined) {
-                effectiveUiVisible = s.domainExceptions[domain];
-            }
-        }
-    } catch (e) { /* ignore */ }
-
-    sendResponse({ state: s, effectiveUiVisible });
+async function handleSetNavExpanded(message, sender, sendResponse) {
+    await updateAndSync({ navExpanded: message.expanded }, { type: MSG.SYNC_NAV_EXPANDED, expanded: message.expanded });
+    sendResponse({ success: true });
 }
 
-async function handleCheckPipStatus(message, sender, sendResponse) {
+// handleTogglePlay removed in favor of handleStateToggle
+
+async function handleExecuteCommand(message, sender, sendResponse) {
+    const { command, scope, tabId } = message;
+    await processVisibilityCommand(command, scope || 'global', tabId || null);
+    sendResponse({ success: true });
+}
+
+async function handleVideoDetected(message, sender, sendResponse) {
+    // Placeholder for telemetry if needed
+    sendResponse({ success: true });
+}
+
+async function handleActivateSelectionMode(message, sender, sendResponse) {
+    const tabId = sender.tab ? sender.tab.id : null;
+    if (tabId) {
+        await safeSendMessage(tabId, { type: MSG.START_SELECTION_MODE });
+    }
+    sendResponse({ success: true });
+}
+
+async function handleStopSelectionModeGlobal(message, sender, sendResponse) {
+    await syncToRelevantTabs({ type: MSG.STOP_SELECTION_MODE });
+    sendResponse({ success: true });
+}
+
+async function handleRequestPipState(message, sender, sendResponse) {
     const s = await getPipState();
-    sendResponse({ active: s.active, state: s });
+    const domain = getTabDomain(sender.tab);
+    const effectiveUiVisible = calculateSessionVisibility(s, domain);
+
+    sendResponse({ 
+        state: s, 
+        active: s.active, // Compatibility for handleCheckPipStatus
+        uiVisible: s.uiVisible, // Compatibility for handleGetUiState
+        effectiveUiVisible 
+    });
 }
 
 function handlePing(message, sender, sendResponse) {
@@ -911,175 +876,96 @@ function handlePing(message, sender, sendResponse) {
 }
 
 // ========================================
-// Consolidated Message Listener
+// Consolidated Message Dispatcher
 // ========================================
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    // Dispatch to appropriate handler based on message type
-    switch (message.type) {
-        case 'GET_UI_STATE':
-            handleGetUiState(message, sender, sendResponse);
-            return true;
-
-
-
-        case 'EXECUTE_COMMAND':
-            handleExecuteCommand(message, sender, sendResponse);
-            return true; // Keep channel open for async response
-
-        case 'VIDEO_DETECTED':
-            handleVideoDetected(message, sender, sendResponse);
-            return false;
-
-        case 'ACTIVATE_SELECTION_MODE':
-            handleActivateSelectionMode(message, sender, sendResponse);
-            return false;
-
-        case 'PIP_ACTIVATED':
-            handlePipActivated(message, sender, sendResponse);
-            handlePipStateSync(message, sender, sendResponse);
-            return true;
-
-        case 'PIP_DEACTIVATED':
-            handlePipDeactivated(message, sender, sendResponse);
-            handlePipStateSync(message, sender, sendResponse);
-            return true;
-
-        case 'STOP_SELECTION_MODE_GLOBAL':
-            handleStopSelectionModeGlobal(message, sender, sendResponse);
-            return false;
-
-        case 'EXIT_PIP':
-            handleExitPip(message, sender, sendResponse);
-            // Optimistically hide the UI on all tabs immediately
-            syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
-            return false;
-
-        case 'NAVIGATE_VIDEO':
-            handleNavigateVideo(message, sender, sendResponse);
-            return true;
-
-        case 'TOGGLE_LIKE':
-            handleToggleLike(message, sender, sendResponse);
-            return true;
-
-        case 'TOGGLE_FAVORITE':
-            handleToggleFavorite(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_FAVORITE_STATE':
-            handleUpdateFavoriteState(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_LIKE_STATE':
-            handleUpdateLikeState(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_PLAYBACK_STATE':
-            handleUpdatePlaybackState(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_TIKTOK_LIVE_STATE':
-            handleUpdateTikTokLiveState(message, sender, sendResponse);
-            return true;
-
-        case 'SET_VOLUME':
-            handleSetVolume(message, sender, sendResponse);
-            return true;
-
-        case 'SET_VOLUME_LIVE':
-            // Lightweight real-time relay during slider drag — no save, no log
-            _volumeDragActive = true;
-            if (pipState.tabId) {
-                safeSendMessage(pipState.tabId, { type: 'CHANGE_VOLUME', volume: message.volume });
+const COMMAND_HANDLERS = {
+    [MSG.GET_UI_STATE]: handleRequestPipState,
+    [MSG.EXECUTE_COMMAND]: handleExecuteCommand,
+    [MSG.ACTIVATE_SELECTION_MODE]: handleActivateSelectionMode,
+    [MSG.PIP_ACTIVATED]: handlePipActivated,
+    [MSG.PIP_DEACTIVATED]: handlePipDeactivated,
+    [MSG.STOP_SELECTION_MODE_GLOBAL]: handleStopSelectionModeGlobal,
+    [MSG.EXIT_PIP]: async (message, sender, sendResponse) => {
+        await handleExitPip(message, sender, sendResponse);
+    },
+    [MSG.NAVIGATE_VIDEO]: handleNavigateVideo,
+    [MSG.TOGGLE_LIKE]: (m, s, r) => handleStateToggle('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
+    [MSG.LIKE_VIDEO]: (m, s, r) => handleStateToggle('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
+    [MSG.TOGGLE_FAVORITE]: (m, s, r) => handleStateToggle('favorited', MSG.SYNC_FAVORITE_UI, MSG.FAVORITE_VIDEO, m, s, r),
+    [MSG.FAVORITE_VIDEO]: (m, s, r) => handleStateToggle('favorited', MSG.SYNC_FAVORITE_UI, MSG.FAVORITE_VIDEO, m, s, r),
+    [MSG.UPDATE_FAVORITE_STATE]: (m, s, r) => handleStateUpdate('favorited', MSG.SYNC_FAVORITE_UI, m, s, r),
+    [MSG.UPDATE_LIKE_STATE]: (m, s, r) => handleStateUpdate('liked', MSG.SYNC_LIKE_UI, m, s, r),
+    [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateUpdate('playing', MSG.SYNC_PLAYBACK_UI, m, s, r),
+    [MSG.UPDATE_TIKTOK_LIVE_STATE]: handleUpdateTikTokLiveState,
+    [MSG.SET_VOLUME]: handleSetVolume,
+    [MSG.CHANGE_VOLUME]: handleSetVolume, // Relay-compatible alias
+    [MSG.SET_VOLUME_LIVE]: (message, sender, sendResponse) => {
+        // Lightweight real-time relay during slider drag
+        _volumeDragActive = true;
+        if (pipState.tabId) {
+            safeSendMessage(pipState.tabId, { type: MSG.CHANGE_VOLUME, volume: message.volume });
+        }
+        pipState.volume = message.volume;
+        if (message.volume > 0 && pipState.muted) pipState.muted = false;
+        sendResponse({ success: true });
+    },
+    [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateToggle('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
+    [MSG.TOGGLE_MUTE]: handleToggleMute,
+    [MSG.TOGGLE_MUTE_VIDEO]: handleToggleMute, // Relay-compatible alias
+    [MSG.SEEK_VIDEO]: handleSeekVideo,
+    [MSG.UPDATE_VOLUME_STATE]: handleUpdateVolumeState,
+    [MSG.SET_NAV_EXPANDED]: handleSetNavExpanded,
+    [MSG.REQUEST_PIP_STATE]: handleRequestPipState,
+    [MSG.GET_PIP_STATE]: handleRequestPipState,
+    [MSG.REQUEST_EARLY_PANEL]: async (message, sender, sendResponse) => {
+        try {
+            const state = await getPipState();
+            const senderTabId = sender.tab?.id;
+            if (!state.active) {
+                if (senderTabId) safeSendMessage(senderTabId, { type: MSG.HIDE_VOLUME_PANEL });
+                sendResponse({ skipped: true });
+                return;
             }
-            // Silent in-memory update only
-            pipState.volume = message.volume;
-            if (message.volume > 0 && pipState.muted) pipState.muted = false;
-            sendResponse({ success: true });
-            return false;
+            if (!senderTabId || senderTabId === state.tabId) {
+                sendResponse({ skipped: true });
+                return;
+            }
+            const tab = sender.tab;
+            if (!tab.url || !canReceivePipMessages(tab)) {
+                sendResponse({ skipped: true });
+                return;
+            }
+            const success = await injectControlPanel(senderTabId, tab.url);
+            if (success) {
+                lastPanelShow.delete(senderTabId);
+                showControlPanel(senderTabId);
+            }
+            sendResponse({ success });
+        } catch (e) {
+            sendResponse({ skipped: true });
+        }
+    },
+    [MSG.CHECK_PIP_STATUS]: handleRequestPipState,
+    [MSG.SIGNAL_NAVIGATION]: handleSignalNavigation,
+    [MSG.SYNC_DRAG_POSITION]: handleSyncDragPosition,
+    [MSG.GET_DRAG_POSITION]: handleGetDragPosition,
+    [MSG.PING]: handlePing
+};
 
-        case 'TOGGLE_PLAY':
-            handleTogglePlay(message, sender, sendResponse);
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message || !message.type) return false;
+
+    const handler = COMMAND_HANDLERS[message.type];
+    if (handler) {
+        const result = handler(message, sender, sendResponse);
+        // If handler returns exactly true, we tell Chrome to keep the channel open.
+        // If it's a Promise (from an async function), we should also return true.
+        if (result === true || (result && typeof result.then === 'function')) {
             return true;
-
-        case 'TOGGLE_MUTE':
-            handleToggleMute(message, sender, sendResponse);
-            return true;
-
-        case 'SEEK_VIDEO':
-            handleSeekVideo(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_AD_STATE':
-            handleUpdateAdState(message, sender, sendResponse);
-            return true;
-
-        case 'UPDATE_VOLUME_STATE':
-            handleUpdateVolumeState(message, sender, sendResponse);
-            return true;
-
-        case 'SET_NAV_EXPANDED':
-            handleSetNavExpanded(message, sender, sendResponse);
-            return true;
-
-        case 'REQUEST_PIP_STATE':
-        case 'GET_PIP_STATE':
-            handleRequestPipState(message, sender, sendResponse);
-            return true;
-
-        case 'REQUEST_EARLY_PANEL':
-            // Early panel injection for non-origin tabs.
-            // Triggered from ui-visibility-listener.js at document_start
-            // so the volume panel appears immediately on navigation without
-            // waiting for onUpdated + 300ms delay.
-            (async () => {
-                try {
-                    const state = await getPipState();
-                    const senderTabId = sender.tab?.id;
-                    if (!state.active) {
-                        // Cleanup: explicitly hide PiP if BfCache restored a stale DOM
-                        if (senderTabId) safeSendMessage(senderTabId, { type: 'HIDE_VOLUME_PANEL' });
-                        sendResponse({ skipped: true });
-                        return;
-                    }
-                    if (!senderTabId || senderTabId === state.tabId) {
-                        // This IS the origin tab — skip
-                        sendResponse({ skipped: true });
-                        return;
-                    }
-                    const tab = sender.tab;
-                    if (!tab.url || !canReceivePipMessages(tab)) {
-                        sendResponse({ skipped: true });
-                        return;
-                    }
-                    const success = await injectControlPanel(senderTabId, tab.url);
-                    if (success) {
-                        lastPanelShow.delete(senderTabId); // Clear stale debounce from previous page
-                        showControlPanel(senderTabId);
-                    }
-                    sendResponse({ success });
-                } catch (e) {
-                    sendResponse({ skipped: true });
-                }
-            })();
-            return true;
-
-        case 'CHECK_PIP_STATUS':
-            handleCheckPipStatus(message, sender, sendResponse);
-            return true;
-
-        case 'SIGNAL_NAVIGATION':
-            handleSignalNavigation(message, sender, sendResponse);
-            return true;
-
-        case 'PING':
-            handlePing(message, sender, sendResponse);
-            return false;
-
-        default:
-            return false; // Unknown message type
+        }
     }
+    return false;
 });
 
 // Detectar cuando se cierra la pestaña
@@ -1091,10 +977,8 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
     if (!pipState) await getPipState();
 
     if (tabId === pipState.tabId) {
-        log.info('Tab closed');
-        await savePipState({ active: false, tabId: null });
-        await cleanupAllSessionPanels(); // Cleanup Google tabs if YouTube closed
-        await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
+        log.info('Origin tab closed. Tearing down.');
+        await performPipGlobalCleanup();
     }
     // Memory Safety: remove from tracking set if tab is closed
     _activeSessionTabIds.delete(tabId);
@@ -1146,67 +1030,22 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const isNavigationGrace = tabId === _navigationGraceTabId;
 
     // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check)
-    if (currentState.active && tabId === currentState.tabId) {
+    if (tabId === currentState.tabId) {
         if (isNavigationGrace) {
             log.info('Origin tab updated during navigation grace period. Skipping validation.');
             return;
         }
 
-        // Special Handling for Prime Video:
-        // Prime often updates the URL slightly after the video starts (e.g. adding ref markers).
-        // If we are on Prime and PiP is confirmed active, we should NOT reset state just because URL changed.
-        const isPrime = tab.url.includes('primevideo.com');
-
-        log.info('Origin tab updated. Validating PiP...', { isPrime });
-
-        try {
-            const response = await safeSendMessage(tabId, { type: 'VALIDATE_PIP_STATUS' });
-
-            if (!response) {
-                // No response (undefined/null) -> Communication definitely failed or tab closed
-                // This usually happens during reload before content script is ready
-                log.warn('PiP died on update/reload (No response).');
-                await savePipState({ active: false, tabId: null });
-                await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
-                return;
-            }
-
-            if (response.error) {
-                // Communication error captured by safeSendMessage
-                if (isPrime) {
-                    log.warn('Communication failed on Prime update, but assuming PiP is safe (Heuristic).', response.error);
-                    return; // Trust that PiP is still there
-                } else {
-                    log.warn('Communication failed on update. Assuming reload/navigation.', response.error);
-                    await savePipState({ active: false, tabId: null });
-                    await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
-                    return;
-                }
-            }
-
-            if (!response.isActive) {
-                // Successful communication, but PiP reports not active
-                log.warn('PiP reported dead on update/reload.');
-                await savePipState({ active: false, tabId: null });
-                await syncToRelevantTabs({ type: 'HIDE_VOLUME_PANEL' });
-                return;
-            } else {
-                log.info('PiP survived update. Refreshing metadata.');
-                if (response.metadata) {
-                    await savePipState(response.metadata);
-                }
-            }
-        } catch (e) {
-            // Should be caught by safeSendMessage, but just in case
-            if (isPrime) {
-                log.info('Exception on Prime update check, but assuming PiP is safe.', e.message);
-                return;
-            }
-
-            log.info('Exception during update check. Assuming reload.', e.message);
-            await savePipState({ active: false, tabId: null });
+        log.info('Origin tab updated. Validating PiP...');
+        const isValid = await validateTabPipStatus(tabId, tab.url);
+        
+        if (!isValid) {
+            log.warn('PiP died or reported inactive on update/reload.');
+            await updateAndSync({ active: false, tabId: null }, { type: MSG.HIDE_VOLUME_PANEL });
             return;
         }
+
+        log.info('PiP survived update.');
     }
 
     // 3. If PiP is active, inject/show the control panel in this tab
@@ -1222,49 +1061,21 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
 // Listen for keyboard commands
 chrome.commands.onCommand.addListener(async (command) => {
-    log.info('Command received:', command);
+    log.info('Keyboard command received:', command);
 
     if (command === 'hide_ui' || command === 'show_ui') {
-        const isVisible = command === 'show_ui';
-
-        // Update Global State
-        await savePipState({ uiVisible: isVisible });
-
-        // Broadcast intent to all supported tabs
-        // Content scripts will validate against domainExceptions locally
-        const state = await getPipState();
-        syncToRelevantTabs({
-            type: 'SYNC_SESSION_VISIBILITY',
-            visible: isVisible,
-            state: state
-        });
-
-        log.info(`Global uiVisible set to: ${isVisible} (synced to relevant tabs)`);
+        // Keyboard shortcuts are inherently global in this context
+        await processVisibilityCommand(command, 'global', null);
     } else if (command === 'focus_pip') {
         const state = await getPipState();
-
         if (state.active && state.tabId) {
             log.info('Sending FOCUS_PIP to tab:', state.tabId);
-            try {
-                await safeSendMessage(state.tabId, { type: 'FOCUS_PIP' });
-            } catch (e) {
-                log.error('Failed to send FOCUS_PIP:', e);
-            }
+            await safeSendMessage(state.tabId, { type: MSG.FOCUS_PIP });
         } else {
             log.info('No active PiP to focus');
         }
     } else if (command === 'close_pip') {
-        const state = await getPipState();
-
-        if (state.active && state.tabId) {
-            log.info('Sending EXIT_PIP to tab:', state.tabId);
-            try {
-                await safeSendMessage(state.tabId, { type: 'EXIT_PIP' });
-            } catch (e) {
-                log.error('Failed to send EXIT_PIP:', e);
-            }
-        } else {
-            log.info('No active PiP to close');
-        }
+        // Use the unified exit logic which handles pausing correctly
+        await handleExitPip({}, null, null);
     }
 });
