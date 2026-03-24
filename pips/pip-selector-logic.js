@@ -692,14 +692,6 @@
     // --- Initialization ---
 
     function init() {
-        trackListener(document, 'leavepictureinpicture', () => {
-            // On supported platforms, the specific script handles this.
-            if (isSupportedPlatform) return;
-
-            // CRITICAL: Notify background so it can sync state back to FALSE
-            // This ensures "Universal Button" reverts to TV icon even on generic sites
-            chrome.runtime.sendMessage({ type: 'PIP_DEACTIVATED' });
-        }, { capture: true });
 
         if (isSupportedPlatform) {
             // Find the specific button for the platform

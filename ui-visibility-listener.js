@@ -8,8 +8,28 @@
     const _runtime = (typeof chrome !== 'undefined' && chrome.runtime) ? chrome.runtime : (typeof browser !== 'undefined' && browser.runtime ? browser.runtime : null);
 
 
+    const CONSTANTS = {
+        HOLD_MS: 200,
+        MARGIN: 10,
+        INJECTION_TIMEOUT: 5000,
+        MAINTENANCE_INTERVAL: 1000,
+        TRANSITION: 'all 0.3s ease',
+        DRAG_THRESHOLD: 3,
+        PIP_UI_ATTR: 'data-pip-ui',
+        ORIGINAL_DISPLAY_ATTR: 'data-original-display',
+        PROCESSED_ATTR: 'data-pip-processed',
+        NAVIGATING_ATTR: 'data-pip-navigating'
+    };
+
     let isUIVisible = true;
     let visibilityVersion = 1;
+    const uiElementsCache = new Set(); // Performance: Cache of all tracked UI elements
+
+    // Helper to sync visibility state globally and internally
+    function setUIVisibilityState(visible) {
+        isUIVisible = visible;
+        window.__pipUIVisible = visible;
+    }
 
     // Inject shared Shake Animation (used by multiple content scripts)
     if (!document.getElementById('pipShakeAnimation')) {
@@ -35,15 +55,16 @@
 
         // Capture original display only once during the element's first interaction with our system.
         // This avoids capturing 'none' if we ourselves hit the element while the UI is hidden.
-        if (!el.hasAttribute('data-original-display') && !el.hasAttribute('data-pip-processed')) {
+        if (!el.hasAttribute(CONSTANTS.ORIGINAL_DISPLAY_ATTR) && !el.hasAttribute(CONSTANTS.PROCESSED_ATTR)) {
+            // Optimization: Only use getComputedStyle if inline style is missing
             const currentDisplay = el.style.display || getComputedStyle(el).display;
             if (currentDisplay && currentDisplay !== 'none') {
-                el.setAttribute('data-original-display', currentDisplay);
+                el.setAttribute(CONSTANTS.ORIGINAL_DISPLAY_ATTR, currentDisplay);
             }
         }
 
         if (isUIVisible) {
-            const original = el.getAttribute('data-original-display') || 'flex';
+            const original = el.getAttribute(CONSTANTS.ORIGINAL_DISPLAY_ATTR) || 'flex';
             el.style.display = original;
             el.setAttribute('aria-hidden', 'false');
 
@@ -61,12 +82,15 @@
     function syncSingleElement(el) {
         if (!el) return;
         // Skip nodes no longer in the DOM to avoid errors or redundant work
-        if (!el.isConnected) return;
+        if (!el.isConnected) {
+            uiElementsCache.delete(el);
+            return;
+        }
 
         const versionStr = String(visibilityVersion);
-        if (el.getAttribute('data-pip-processed') !== versionStr) {
+        if (el.getAttribute(CONSTANTS.PROCESSED_ATTR) !== versionStr) {
             applyVisibility(el);
-            el.setAttribute('data-pip-processed', versionStr);
+            el.setAttribute(CONSTANTS.PROCESSED_ATTR, versionStr);
         }
     }
 
@@ -75,8 +99,12 @@
         if (force) {
             visibilityVersion = (visibilityVersion + 1) % 1000000;
         }
-        const uiElements = document.querySelectorAll('[data-pip-ui="true"]');
-        uiElements.forEach(syncSingleElement);
+        // Optimization: Use cache instead of querySelectorAll
+        if (uiElementsCache.size === 0) {
+            // Safety fallback/initialization
+            document.querySelectorAll(`[${CONSTANTS.PIP_UI_ATTR}="true"]`).forEach(el => uiElementsCache.add(el));
+        }
+        uiElementsCache.forEach(syncSingleElement);
     }
 
     // Listener for global commands
@@ -87,23 +115,20 @@
         }
         if (message.type === "HIDE_EXTENSION_UI") {
             log.info('Received HIDE command');
-            isUIVisible = false;
-            window.__pipUIVisible = false; // Expose globally
+            setUIVisibilityState(false);
             syncAllElements(true);
             sendResponse({ success: true });
         }
         else if (message.type === "SHOW_EXTENSION_UI") {
             log.info('Received SHOW command');
-            isUIVisible = true;
-            window.__pipUIVisible = true; // Expose globally
+            setUIVisibilityState(true);
             syncAllElements(true);
             sendResponse({ success: true });
         }
         else if (message.type === "SYNC_SESSION_VISIBILITY") {
             // Handle Domain-Specific visibility overrides centrally
             log.info('Syncing session visibility:', message.visible);
-            isUIVisible = message.visible;
-            window.__pipUIVisible = message.visible;
+            setUIVisibilityState(!!message.visible);
             syncAllElements(true);
             sendResponse({ success: true });
         }
@@ -114,9 +139,6 @@
             sendResponse({ visible: isUIVisible });
         }
         else {
-            // Very important: if we don't handle the message, we MUST send a response anyway.
-            // Otherwise, since this listener is active, Chrome will throw "The message port 
-            // closed before a response was received" to the sender (background.js).
             if (typeof sendResponse === 'function') sendResponse({ ignored: true });
         }
     };
@@ -126,19 +148,14 @@
     // Initial state check
     if (_runtime) {
         _runtime.sendMessage({ type: "REQUEST_PIP_STATE" }, (res) => {
-            // Priority: effectiveUiVisible (which includes domain exceptions) fallback to state.uiVisible
             const visibleState = (res && res.effectiveUiVisible !== undefined) ? res.effectiveUiVisible : (res && res.state && res.state.uiVisible !== undefined ? res.state.uiVisible : true);
 
             if (res && res.state) {
-                isUIVisible = visibleState;
-                window.__pipUIVisible = visibleState; // Expose globally
+                setUIVisibilityState(visibleState);
                 log.info('Initial state:', isUIVisible);
                 syncAllElements();
             }
 
-            // If PiP is active, request early panel injection for non-origin tabs.
-            // Background will validate that this tab is NOT the origin tab.
-            // This eliminates the wait for onUpdated + 300ms delay on navigation.
             if (res && res.state && res.state.active) {
                 _runtime.sendMessage({ type: "REQUEST_EARLY_PANEL" });
             }
@@ -174,20 +191,39 @@
                 mutation.addedNodes.forEach(node => {
                     if (node.nodeType === 1) { // Node.ELEMENT_NODE
                         // Check if the node itself is a PiP UI element
-                        if (node.getAttribute?.('data-pip-ui') === 'true') {
+                        if (node.getAttribute?.(CONSTANTS.PIP_UI_ATTR) === 'true') {
+                            uiElementsCache.add(node);
                             pendingNodes.add(node);
                             hasRelevantChanges = true;
                         }
                         // Search for PiP UI elements within the added subtree
-                        const children = node.querySelectorAll?.('[data-pip-ui="true"]');
+                        // Optimization: Only scan if it's not a small text/icon node
+                        const children = node.querySelectorAll?.(`[${CONSTANTS.PIP_UI_ATTR}="true"]`);
                         if (children && children.length > 0) {
-                            children.forEach(c => pendingNodes.add(c));
+                            children.forEach(c => {
+                                uiElementsCache.add(c);
+                                pendingNodes.add(c);
+                            });
                             hasRelevantChanges = true;
                         }
                     }
                 });
+                mutation.removedNodes.forEach(node => {
+                    if (node.nodeType === 1) {
+                        if (node.getAttribute?.(CONSTANTS.PIP_UI_ATTR) === 'true') {
+                            uiElementsCache.delete(node);
+                        }
+                        const children = node.querySelectorAll?.(`[${CONSTANTS.PIP_UI_ATTR}="true"]`);
+                        if (children) children.forEach(c => uiElementsCache.delete(c));
+                    }
+                });
             } else if (mutation.type === 'attributes') {
                 // attributeFilter already ensures we only get 'data-pip-ui' changes
+                if (mutation.target.getAttribute(CONSTANTS.PIP_UI_ATTR) === 'true') {
+                    uiElementsCache.add(mutation.target);
+                } else {
+                    uiElementsCache.delete(mutation.target);
+                }
                 pendingNodes.add(mutation.target);
                 hasRelevantChanges = true;
             }
@@ -203,7 +239,7 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['data-pip-ui'] // High-performance filter
+        attributeFilter: [CONSTANTS.PIP_UI_ATTR] // High-performance filter
     });
 
     // --- Shared Utilities (PiPUtils) ---
@@ -216,7 +252,7 @@
             return isUIVisible;
         },
 
-        clampToViewport: function (element, margin = 10) {
+        clampToViewport: function (element, margin = CONSTANTS.MARGIN) {
             // getBoundingClientRect reflects the *visual* size after transforms (e.g. scale)
             // which is what we need to compare against the viewport.
             let rect = element.getBoundingClientRect();
@@ -258,8 +294,8 @@
         },
 
         reclampAllUI: function () {
-            const uiElements = document.querySelectorAll('[data-pip-ui="true"]');
-            uiElements.forEach(el => window.PiPUtils.reclampSingleUI(el));
+            // Optimization: Use cache instead of querySelectorAll
+            uiElementsCache.forEach(el => window.PiPUtils.reclampSingleUI(el));
         },
 
         safeAppendToBody: function (element) {
@@ -306,7 +342,7 @@
         },
 
         makeDraggable: function (element, options = {}) {
-            const HOLD_MS = 200; // ms to hold before drag activates
+            const { HOLD_MS = CONSTANTS.HOLD_MS } = options; // ms to hold before drag activates
 
             let isDragging = false;  // true once drag mode is confirmed
             let holdTimer = null;   // fires after HOLD_MS to confirm intent
@@ -388,7 +424,7 @@
                 if (window.PiPUtils?.reclampSingleUI) window.PiPUtils.reclampSingleUI(element);
                 if (onDragEnd) onDragEnd({ hasMoved, element });
 
-                window.requestAnimationFrame(() => { element.style.transition = 'all 0.3s ease'; });
+                window.requestAnimationFrame(() => { element.style.transition = CONSTANTS.TRANSITION; });
             };
 
             const onPointerDown = (e) => {
@@ -450,7 +486,7 @@
                 btn.title = title;
             }
             if (!disablePipUiAttribute) {
-                btn.setAttribute('data-pip-ui', 'true');
+                btn.setAttribute(CONSTANTS.PIP_UI_ATTR, 'true');
             }
             btn.innerHTML = text || "";
 
@@ -475,7 +511,7 @@
                 padding: '0',
                 userSelect: 'none',
                 boxShadow: '0 4px 15px rgba(0,0,0,0.3)',
-                transition: 'box-shadow 0.3s ease, opacity 0.3s ease, transform 0.1s ease',
+                transition: CONSTANTS.TRANSITION,
                 backdropFilter: 'blur(10px)',
                 touchAction: 'none',
                 outline: 'none',
@@ -501,8 +537,8 @@
                         localStorage.setItem('global_pip_btn_position', JSON.stringify(pos));
 
                         // 2. Global save for cross-domain sync (async)
-                        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                            chrome.storage.local.set({ global_pip_btn_position: pos });
+                        if (_runtime && _runtime.sendMessage) {
+                            _runtime.sendMessage({ type: "SYNC_DRAG_POSITION", pos });
                         }
                     }
                     if (options.onDragEnd) options.onDragEnd(data);
@@ -528,11 +564,9 @@
                 } catch (e) { }
 
                 // Then try chrome.storage (global source of truth, asynchronous)
-                if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-                    chrome.storage.local.get('global_pip_btn_position', (res) => {
-                        if (res && res.global_pip_btn_position) {
-                            restorePos(res.global_pip_btn_position);
-                        }
+                if (_runtime && _runtime.sendMessage) {
+                    _runtime.sendMessage({ type: "GET_DRAG_POSITION" }, (res) => {
+                        if (res && res.pos) restorePos(res.pos);
                     });
                 }
             }
@@ -562,7 +596,7 @@
                         createFn();
                     }
                     moTimer = null;
-                }, 1000);
+                }, CONSTANTS.MAINTENANCE_INTERVAL);
             });
             const targetForObserve = document.body || document.documentElement;
             observer.observe(targetForObserve, { childList: true, subtree: true });
@@ -594,7 +628,18 @@
 
         trackPiPState: function (options) {
             const { onEnter, onExit, metadataCollector, controlEventName } = options;
+            
+            // Store or update callbacks and metadata collector
             window.PiPUtils._metadataCollector = metadataCollector;
+            window.PiPUtils._onEnter = onEnter;
+            window.PiPUtils._onExit = onExit;
+            window.PiPUtils._controlEventName = controlEventName;
+
+            if (window.PiPUtils._trackPiPInitialized) {
+                log.debug('trackPiPState already initialized. Only updating callbacks.');
+                return;
+            }
+            window.PiPUtils._trackPiPInitialized = true;
 
             // Centralized History Navigation Support (Back/Forward arrows)
             // This ensures PiP closes and UI clears when the user uses browser navigation.
@@ -606,7 +651,7 @@
 
                 if (document.pictureInPictureElement) {
                     // 1. Dispatch exit event for the platform bridge to handle cleanup
-                    const eventName = controlEventName || 'PIP_Control_Event';
+                    const eventName = window.PiPUtils._controlEventName || 'PIP_Control_Event';
                     document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
                     // 2. Natively exit
                     document.exitPictureInPicture().catch(() => {});
@@ -632,8 +677,8 @@
                     playing: !video.paused
                 };
 
-                if (metadataCollector) {
-                    const extra = metadataCollector(video);
+                if (window.PiPUtils._metadataCollector) {
+                    const extra = window.PiPUtils._metadataCollector(video);
                     Object.assign(metadata, extra);
                 }
 
@@ -643,7 +688,7 @@
                     ...metadata
                 });
 
-                if (onEnter) onEnter(video);
+                if (window.PiPUtils._onEnter) window.PiPUtils._onEnter(video);
 
             }, true); // Capture
 
@@ -667,7 +712,7 @@
                     // don't tell the background that PiP ended. This keeps the panel alive.
                     // We check BOTH the BridgeUtils internal state AND the DOM attribute bridge.
                     const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
-                                       document.documentElement.hasAttribute('data-pip-navigating');
+                                       document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
 
                     if (isNavigating && !isManualExit) {
                         log.info('Natural navigation exit detected - suppressing PiP deactivation signal.');
@@ -680,7 +725,7 @@
                         force: isManualExit // Ensure background honors manual exits immediately
                     });
 
-                    if (onExit) onExit(e.target);
+                    if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
                 }, 100);
             }, true); // Capture
         },
@@ -747,9 +792,9 @@
             };
 
             failSafeTimeout = setTimeout(() => {
-                log.info(`Injection of ${bridgeFileName} timed out after 5s. Cleaning up.`);
+                log.info(`Injection of ${bridgeFileName} timed out after ${CONSTANTS.INJECTION_TIMEOUT / 1000}s. Cleaning up.`);
                 cleanup();
-            }, 5000);
+            }, CONSTANTS.INJECTION_TIMEOUT);
 
             utilsScript.onload = () => {
                 const bridgeScript = document.createElement('script');
@@ -825,6 +870,16 @@
 
     window._pipUiVisibilityListenerCleanup = cleanup;
     window.addEventListener('pagehide', cleanup);
+
+    // Default tracking for generic sites (reports basic PiP activation if no specific bridge is present)
+    window.PiPUtils.trackPiPState({
+        metadataCollector: () => {
+            return {
+                isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
+                isSelector: !!(window.__pipExt && window.__pipExt.isSelector)
+            };
+        }
+    });
 
     log.info('Listener active and monitoring.');
     // Zoom/Resize resilience: Re-clamp all UI elements to keep them within viewport
