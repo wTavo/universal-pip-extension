@@ -666,6 +666,13 @@ async function handlePipActivated(message, sender, sendResponse) {
         return;
     }
 
+    // Determine if this session should be considered extension-triggered.
+    // We inherit the flag if:
+    // 1. The message specifically says it's extension-triggered (initial start).
+    // 2. OR if we have an active session in the SAME tab that was extension-triggered (video swap).
+    const isExtensionTriggered = (message.isExtensionTriggered === true) || 
+                                (pipState.active && pipState.tabId === newTabId && pipState.isExtensionTriggered);
+
     const originDomain = message.originDomain || getTabDomain(sender.tab);
 
     const newState = {
@@ -673,6 +680,7 @@ async function handlePipActivated(message, sender, sendResponse) {
         ...message, // Merge incoming properties
         active: true,
         tabId: newTabId,
+        isExtensionTriggered,
         navExpanded: true,
         isSelectorMode: message.pipMode === 'manual',
         isTikTokLive: (message.platform === 'tiktok' && !!message.isLive),
@@ -682,7 +690,7 @@ async function handlePipActivated(message, sender, sendResponse) {
     await updateAndSync(newState, { 
         type: MSG.PIP_SESSION_STARTED, 
         state: newState,
-        isExtensionTriggered: !!message.isExtensionTriggered
+        isExtensionTriggered: newState.isExtensionTriggered
     });
 
     log.info('Signaling other tabs to sync navigation state');

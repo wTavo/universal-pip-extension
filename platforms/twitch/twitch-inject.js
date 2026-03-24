@@ -13,11 +13,11 @@
         window.PiPUtils.trackPiPState({
             onEnter: (video) => {
                 setActive();
-                // Clear trigger flag after activation
-                setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
+                // Persistent across swaps (cleared on actual exit below)
             },
             onExit: () => {
                 setInactive();
+                if (window.__pipExt) window.__pipExt.isTriggered = false;
             },
             controlEventName: 'Twitch_Control_Event',
             metadataCollector: (video) => {

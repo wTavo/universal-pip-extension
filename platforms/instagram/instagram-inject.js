@@ -11,11 +11,10 @@
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
         window.PiPUtils.trackPiPState({
             onEnter: (video) => {
-                // Clear trigger flag after activation
-                setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
+                // Persistent across swaps (cleared on actual exit below)
             },
             onExit: (video) => {
-                // Handled globally
+                if (window.__pipExt) window.__pipExt.isTriggered = false;
             },
             controlEventName: 'Instagram_Control_Event',
             metadataCollector: (video) => {

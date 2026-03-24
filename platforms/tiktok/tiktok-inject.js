@@ -14,8 +14,10 @@
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
         window.PiPUtils.trackPiPState({
             onEnter: () => {
-                // Clear trigger flag after activation
-                setTimeout(() => { if (window.__pipExt) window.__pipExt.isTriggered = false; }, 500);
+                // Persistent across swaps (cleared on actual exit below)
+            },
+            onExit: () => {
+                if (window.__pipExt) window.__pipExt.isTriggered = false;
             },
             controlEventName: 'TikTok_Control_Event',
             metadataCollector: (video) => {
