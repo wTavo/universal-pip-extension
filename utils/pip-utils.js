@@ -571,6 +571,37 @@
                     maybe.then(safeCallback).catch(() => { });
                 }
             } catch (err) { }
+        },
+
+        /**
+         * Creates a togglePiP function for a platform inject file.
+         * Identical logic was previously copy-pasted across TikTok, YouTube, and Twitch injects.
+         * @param {string} controlEventName - e.g. 'TikTok_Control_Event'
+         * @returns {Function} togglePiP function
+         */
+        createTogglePiP: function (controlEventName) {
+            return function togglePiP() {
+                if (window.PiPFloatingButton?.isActive?.()) {
+                    try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
+                    return;
+                }
+                window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
+                window.__pipExt.isTriggered = true;
+                document.dispatchEvent(new CustomEvent(controlEventName, { detail: { action: 'REQUEST_PIP' } }));
+            };
+        },
+
+        /**
+         * Creates a NAVIGATE_VIDEO relay handler with the popstate guard pattern.
+         * Identical logic was previously copy-pasted across all inject files.
+         * @returns {Function} relay mapper: (msg) => action detail
+         */
+        createNavigateRelay: function () {
+            return (msg) => {
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
+                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
+            };
         }
     });
 
@@ -580,4 +611,22 @@
         }
     });
 
+    /**
+     * [Bfcache Fix] Centralized restoration handler.
+     * When a page is restored from bfcache, the extension's message port is often broken.
+     * A 'poke' (sendMessage) from the content script to the background repairs it.
+     */
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted && _runtime && _runtime.sendMessage) {
+            log.info('Page restored from bfcache. Repairing port and re-syncing...');
+            window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
+                if (res?.state) {
+                    // Notify all local components that we are back and have fresh state
+                    document.dispatchEvent(new CustomEvent('UNIP_BFCACHE_RESTORED', { 
+                        detail: { state: res.state } 
+                    }));
+                }
+            });
+        }
+    });
 })();

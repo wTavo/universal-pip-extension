@@ -135,7 +135,9 @@
         return false;
     }
 
-    window.addEventListener('pagehide', cleanupSelectorInternals);
+    // [Bfcache Fix] Do NOT cleanup on pagehide.
+    // window.addEventListener('pagehide', cleanupSelectorInternals);
+
 
     function checkPlatformSupport() {
         // Force fallback logic (generic button) if inside an iframe

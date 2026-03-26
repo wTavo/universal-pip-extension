@@ -7,7 +7,6 @@
 
     if (window.__PIP_PANEL_LOADED__) {
         log.warn('Script re-injected. Performing defensive cleanup of previous instance.');
-        //log.debug('Script environment restarted or re-injected. Performing defensive cleanup.');
         if (typeof window._pipHideEverything === 'function') {
             try { window._pipHideEverything(); } catch (e) { }
         }
@@ -90,6 +89,14 @@
             }
         }
     };
+
+    // Centralized nav-visibility check (was duplicated 3 times with slightly different variable names)
+    function canShowNavButtons(stateObj) {
+        const s = stateObj || STATE.pipState || {};
+        const isGlobalHidden = s.uiVisible === false;
+        const isOriginHidden = s.originDomain && s.domainExceptions && s.domainExceptions[s.originDomain] === false;
+        return STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
+    }
 
     const Handlers = {
         PANEL_PING: (msg, resp) => {
@@ -238,11 +245,7 @@
             const wrapper = targetDoc.getElementById("pipNavButtonsWrapper");
             if (btn) window.PiPVolumePanelUI.updateNavCollapse(btn, STATE.isNavExpanded);
             if (wrapper) {
-                // Determine layout visibility using Origin Domain, NOT window.__pipUIVisible (which is Tab-specific)
-                const state = pipStateCache || {};
-                const isGlobalHidden = state.uiVisible === false;
-                const isOriginHidden = state.originDomain && state.domainExceptions && state.domainExceptions[state.originDomain] === false;
-                const canShow = STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
+                const canShow = canShowNavButtons();
 
                 if (canShow) {
                     wrapper.style.display = "flex";
@@ -251,8 +254,7 @@
                 } else {
                     wrapper.style.opacity = "0";
                     setTimeout(() => {
-                        const isStillHidden = !STATE.isNavExpanded || isGlobalHidden || isOriginHidden;
-                        if (isStillHidden) wrapper.style.display = "none";
+                        if (!canShowNavButtons()) wrapper.style.display = "none";
                     }, 300);
                 }
             }
@@ -616,10 +618,7 @@
                     window.PiPVolumePanelUI.updateNavCollapse(arcBtn, STATE.isNavExpanded);
 
                     if (buttonsWrapper) {
-                        const s = STATE.pipState || {};
-                        const isGlobalHidden = s.uiVisible === false;
-                        const isOriginHidden = s.originDomain && s.domainExceptions && s.domainExceptions[s.originDomain] === false;
-                        const canShow = STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
+                        const canShow = canShowNavButtons();
 
                         if (canShow) {
                             buttonsWrapper.style.display = "flex";
@@ -628,8 +627,7 @@
                         } else {
                             buttonsWrapper.style.opacity = "0";
                             setTimeout(() => {
-                                const isStillHidden = !STATE.isNavExpanded || isGlobalHidden || isOriginHidden;
-                                if (isStillHidden) buttonsWrapper.style.display = "none";
+                                if (!canShowNavButtons()) buttonsWrapper.style.display = "none";
                             }, 300);
                         }
                     }
@@ -733,10 +731,7 @@
 
                 const buttonsWrapper = navContainer.querySelector("#pipNavButtonsWrapper");
                 if (buttonsWrapper) {
-                    const s = STATE.pipState || {};
-                    const isGlobalHidden = s.uiVisible === false;
-                    const isOriginHidden = s.originDomain && s.domainExceptions && s.domainExceptions[s.originDomain] === false;
-                    const canShow = STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
+                    const canShow = canShowNavButtons();
 
                     buttonsWrapper.style.display = canShow ? 'flex' : 'none';
                     buttonsWrapper.style.opacity = canShow ? '1' : '0';
@@ -785,7 +780,7 @@
         const originalTransform = STATE.toggleButton?.style.transform;
         if (STATE.toggleButton) STATE.toggleButton.style.transform = 'none';
 
-        UTILS.sendMsg({ type: "REQUEST_PIP_STATE" }, (res) => {
+        UTILS.sendMsg({ type: "GET_PIP_STATE" }, (res) => {
             if (!res?.state) return;
             const { volume, muted } = res.state;
             if (typeof volume === "number" && STATE.slider) {
@@ -876,5 +871,19 @@
         const muteBtn = targetDoc.getElementById('globalPipMute');
         window.PiPVolumePanelUI.updateMuteButton(muteBtn, muted, volume);
     }
+
+    // ── bfcache restoration handler ──
+    document.addEventListener('UNIP_BFCACHE_RESTORED', (e) => {
+        const state = e.detail?.state;
+        if (!state) return;
+
+        // Ensure UI is updated correctly after restoration
+        if (state.active) {
+            showToggleButton(state);
+            syncUI(state);
+        } else {
+            destroyUI();
+        }
+    });
 
 })();

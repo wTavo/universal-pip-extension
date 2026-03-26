@@ -633,7 +633,7 @@
                 title: chrome.i18n.getMessage("pipToggleBtnBasicTitle")
             }, BTN_THEMES.TOGGLE_FALLBACK);
             btn.setAttribute('data-pip-managed', 'true');
-            btn.appendChild(renderIcon(doc, ICONS.mixer, '24px'));
+            btn.appendChild(createSVG(ICONS.mixer));
             btn.setAttribute('data-pip-fallback', 'true');
             // Intentionally omit data-pip-ui='true'
             btn.setAttribute('data-original-display', 'flex');

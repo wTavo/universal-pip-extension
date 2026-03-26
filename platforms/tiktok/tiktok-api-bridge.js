@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -45,12 +45,7 @@
     let cachedLikeBtn = null;
     let cachedFavBtn = null;
 
-    function normalizeToButton(node) {
-        if (!node) return null;
-        if (node.tagName && node.tagName.toLowerCase() === 'button') return node;
-        const btn = node.closest ? node.closest('button') : null;
-        return btn || node;
-    }
+    // normalizeToButton is now imported from BridgeUtils
 
     function findLikeButton(video) {
         const sidebar = getTikTokSidebar(video);
@@ -393,32 +388,26 @@
 
     // -------- CONTROL EVENTS --------
 
-    async function handleRequestPip() {
-        const v = getActiveVideo();
-        if (!v) return;
-        try {
-            if (document.pictureInPictureElement === v) {
-                await document.exitPictureInPicture();
-            } else {
+    // handleRequestPip uses shared BridgeUtils.handleRequestPip with TikTok-specific preSync
+    function handleRequestPipLocal() {
+        return handleRequestPip({
+            getVideo: getActiveVideo,
+            preSync: () => {
                 // FAST SYNC: Force a state report BEFORE browser PiP activation.
                 cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
                 monitorInteractiveElements();
                 monitorState(null, true);
-
-                if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
-                await v.requestPictureInPicture();
             }
-        } catch (e) { }
+        });
     }
 
-    function handleMute(action, video) {
+    function findMuteButton(video) {
         const muteBtnCandidates = document.querySelectorAll(SELECTORS.MUTE_BTN);
-        const muteBtn = normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
-        if (muteBtn) {
-            if (video && (action === ACTIONS.MUTE ? !video.muted : video.muted)) muteBtn.click();
-        } else if (video) {
-            video.muted = (action === ACTIONS.MUTE);
-        }
+        return normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
+    }
+
+    function handleMuteLocal(video, shouldMute) {
+        handleMuteUnmute(video, shouldMute, findMuteButton);
     }
 
     document.addEventListener('TikTok_Control_Event', (e) => {
@@ -446,19 +435,14 @@
                 break;
             }
             case ACTIONS.REQUEST_PIP:
-                handleRequestPip();
+                handleRequestPipLocal();
                 break;
             case ACTIONS.EXIT_PIP:
                 if (document.pictureInPictureElement) document.exitPictureInPicture();
                 break;
-            case ACTIONS.FOCUS_PIP: {
-                const pipVideo = document.pictureInPictureElement;
-                if (!pipVideo) break;
-                document.exitPictureInPicture().then(() => {
-                    setTimeout(() => pipVideo.requestPictureInPicture().catch(() => { }), 100);
-                }).catch(() => { });
+            case ACTIONS.FOCUS_PIP:
+                handleFocusPip();
                 break;
-            }
             case ACTIONS.SEEK:
                 if (video && Number.isFinite(value)) {
                     let newTime = video.currentTime + value;
@@ -467,15 +451,13 @@
                 }
                 break;
             case ACTIONS.MUTE:
+                handleMuteLocal(video, true);
+                break;
             case ACTIONS.UNMUTE:
-                handleMute(action, video);
+                handleMuteLocal(video, false);
                 break;
             case ACTIONS.SET_VOLUME:
-                if (video && Number.isFinite(value)) {
-                    const vol = Math.max(0, Math.min(1, value / 100));
-                    if (vol > 0 && video.muted) video.muted = false;
-                    video.volume = vol;
-                }
+                handleSetVolume(video, value, (v, vol) => { v.volume = vol / 100; }, handleMuteLocal);
                 break;
             case ACTIONS.CHECK_STATUS:
                 cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;

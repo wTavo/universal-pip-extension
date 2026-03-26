@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, signalNavigation } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, signalNavigation, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -36,12 +36,7 @@
     let lastLikeVideo = null;
     let cachedLikeBtn = null;
 
-    function normalizeToButton(node) {
-        if (!node) return null;
-        if (node.tagName && node.tagName.toLowerCase() === 'button') return node;
-        const btn = node.closest ? node.closest('button') : null;
-        return btn || node;
-    }
+    // normalizeToButton is now imported from BridgeUtils
 
     function findLikeButton(video) {
         // Try active Shorts renderer first
@@ -385,45 +380,25 @@
         setTimeout(monitorState, 250);
     }
 
-    async function handleRequestPip() {
-        const v = getActiveVideo();
-        if (!v) return;
-        try {
-            if (document.pictureInPictureElement === v) {
-                await document.exitPictureInPicture();
-            } else {
+    function handleRequestPipLocal() {
+        return handleRequestPip({
+            getVideo: getActiveVideo,
+            preSync: () => {
                 // Force sync before PiP
                 lastActiveLikeBtn = null; // Clear to force re-attachment
                 monitorInteractiveElements();
-                monitorState(v);
-
-                if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
-                await v.requestPictureInPicture();
+                monitorState(getActiveVideo());
             }
-        } catch (e) { /* Safe catch */ }
+        });
     }
 
-    function handleMute(video, shouldMute) {
+    function handleMuteLocal(video, shouldMute) {
         if (!video) return;
-        const muteBtn = findMuteButton(video);
-        if (muteBtn) {
-            const isCurrentlyMuted = video.muted;
-            if (shouldMute !== isCurrentlyMuted) muteBtn.click();
-        } else {
-            const player = getPlayer(video);
-            if (shouldMute) {
-                if (typeof player?.mute === 'function') player.mute(); else video.muted = true;
-            } else {
-                if (typeof player?.unMute === 'function') player.unMute(); else video.muted = false;
-            }
-        }
+        handleMuteUnmute(video, shouldMute, findMuteButton, getPlayer(video));
     }
 
-    function handleSetVolume(video, value) {
-        if (!video || !Number.isFinite(value)) return;
-        const vol = Math.max(0, Math.min(1, value / 100));
-        if (vol > 0 && video.muted) handleMute(video, false);
-        setVolume(video, Math.round(vol * 100));
+    function handleSetVolumeLocal(video, value) {
+        handleSetVolume(video, value, setVolume, handleMuteLocal);
     }
 
     document.addEventListener('YouTube_Control_Event', (e) => {
@@ -442,24 +417,17 @@
                 document.body.dispatchEvent(new KeyboardEvent('keyup', opts));
                 break;
             }
-            case ACTIONS.REQUEST_PIP: handleRequestPip(); break;
+            case ACTIONS.REQUEST_PIP: handleRequestPipLocal(); break;
             case ACTIONS.EXIT_PIP: if (document.pictureInPictureElement) document.exitPictureInPicture(); break;
-            case ACTIONS.FOCUS_PIP: {
-                const pipV = document.pictureInPictureElement;
-                if (!pipV) break;
-                document.exitPictureInPicture().then(() => {
-                    setTimeout(() => pipV.requestPictureInPicture().catch(() => { }), 100);
-                }).catch(() => { });
-                break;
-            }
+            case ACTIONS.FOCUS_PIP: handleFocusPip(); break;
             case ACTIONS.SEEK:
                 if (video && Number.isFinite(value)) {
                     video.currentTime = Math.max(0, Math.min(video.currentTime + value, video.duration || Infinity));
                 }
                 break;
-            case ACTIONS.MUTE: handleMute(video, true); break;
-            case ACTIONS.UNMUTE: handleMute(video, false); break;
-            case ACTIONS.SET_VOLUME: handleSetVolume(video, value); break;
+            case ACTIONS.MUTE: handleMuteLocal(video, true); break;
+            case ACTIONS.UNMUTE: handleMuteLocal(video, false); break;
+            case ACTIONS.SET_VOLUME: handleSetVolumeLocal(video, value); break;
             case ACTIONS.CHECK_STATUS:
                 cachedLikeBtn = null;
                 lastLikeVideo = null;

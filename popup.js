@@ -278,7 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (command === 'focus_pip') {
                     chrome.runtime.sendMessage({ type: 'EXECUTE_COMMAND', command: 'focus_pip' });
                 } else if (command === 'close_pip') {
-                    // Send message to close PiP
+                    chrome.runtime.sendMessage({ type: 'EXIT_PIP' });
                 }
 
                 log.info('Command executed:', command);

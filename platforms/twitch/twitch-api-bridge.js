@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, enableAutoSwitching } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, enableAutoSwitching, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -100,36 +100,22 @@
         if (video) video.paused ? video.play() : video.pause();
     }
 
-    async function handleRequestPip() {
-        const v = getActiveVideo();
-        if (!v) return;
-        try {
-            if (document.pictureInPictureElement === v) {
-                await document.exitPictureInPicture();
-            } else {
-                monitorState();
-                if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
-                await v.requestPictureInPicture();
-            }
-        } catch (e) { /* Safe catch */ }
+    function handleRequestPipLocal() {
+        return handleRequestPip({
+            getVideo: getActiveVideo,
+            preSync: () => monitorState()
+        });
     }
 
-    function handleMute(video, shouldMute) {
-        if (!video) return;
-        const muteBtn = findMuteButton(video);
-        if (muteBtn) {
-            if (video.muted !== shouldMute) muteBtn.click();
-        } else {
-            video.muted = shouldMute;
-        }
+    function handleMuteLocal(video, shouldMute) {
+        handleMuteUnmute(video, shouldMute, findMuteButton);
     }
 
-    function handleSetVolume(video, value) {
-        if (!video || !Number.isFinite(value)) return;
-        const vol = Math.max(0, Math.min(1, value / 100));
-        if (vol > 0 && video.muted) handleMute(video, false);
-        setVolume(video, Math.round(vol * 100));
+    function handleSetVolumeLocal(video, value) {
+        handleSetVolume(video, value, setVolume, handleMuteLocal);
     }
+
+
 
     document.addEventListener('Twitch_Control_Event', (e) => {
         const { action, value } = e.detail || {};
@@ -138,24 +124,17 @@
         switch (action) {
             case ACTIONS.TOGGLE_PLAY: handleTogglePlay(video); break;
             case ACTIONS.PAUSE: if (video) video.pause(); break;
-            case ACTIONS.REQUEST_PIP: handleRequestPip(); break;
+            case ACTIONS.REQUEST_PIP: handleRequestPipLocal(); break;
             case ACTIONS.EXIT_PIP: if (document.pictureInPictureElement) document.exitPictureInPicture(); break;
-            case ACTIONS.FOCUS_PIP: {
-                const pipV = document.pictureInPictureElement;
-                if (!pipV) break;
-                document.exitPictureInPicture().then(() => {
-                    setTimeout(() => pipV.requestPictureInPicture().catch(() => { }), 100);
-                }).catch(() => { });
-                break;
-            }
+            case ACTIONS.FOCUS_PIP: handleFocusPip(); break;
             case ACTIONS.SEEK:
                 if (video && Number.isFinite(value)) {
                     video.currentTime = Math.max(0, Math.min(video.currentTime + value, video.duration || Infinity));
                 }
                 break;
-            case ACTIONS.MUTE: handleMute(video, true); break;
-            case ACTIONS.UNMUTE: handleMute(video, false); break;
-            case ACTIONS.SET_VOLUME: handleSetVolume(video, value); break;
+            case ACTIONS.MUTE: handleMuteLocal(video, true); break;
+            case ACTIONS.UNMUTE: handleMuteLocal(video, false); break;
+            case ACTIONS.SET_VOLUME: handleSetVolumeLocal(video, value); break;
             case ACTIONS.CHECK_STATUS: monitorState(); break;
         }
     });

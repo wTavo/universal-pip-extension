@@ -77,16 +77,7 @@
     });
 
     // --- Core Functionality ---
-    function togglePiP() {
-        if (window.PiPFloatingButton?.isActive?.()) {
-            // PiP is active (may be in another tab) — route exit via background
-            try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
-            return;
-        }
-        window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
-        window.__pipExt.isTriggered = true;
-        document.dispatchEvent(new CustomEvent('TikTok_Control_Event', { detail: { action: 'REQUEST_PIP' } }));
-    }
+    const togglePiP = window.PiPUtils.createTogglePiP('TikTok_Control_Event');
 
     // --- PiP Button & Selector Ball (via universal manager) ---
     window.PiPFloatingButton?.init({
@@ -108,11 +99,7 @@
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
-            'NAVIGATE_VIDEO': (msg) => {
-                window.__pipIgnoreNextPopstate = true;
-                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
-                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
-            },
+            'NAVIGATE_VIDEO': window.PiPUtils.createNavigateRelay(),
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
             'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' }),

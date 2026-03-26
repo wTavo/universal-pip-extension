@@ -520,6 +520,88 @@
         }
     );
 
+    // -------- SHARED HELPERS (used by platform bridges) --------
+
+    /**
+     * Traverses up from a node to find the closest <button> ancestor, or returns the node itself.
+     * Identical logic was previously duplicated in TikTok and YouTube bridges.
+     */
+    function normalizeToButton(node) {
+        if (!node) return null;
+        if (node.tagName && node.tagName.toLowerCase() === 'button') return node;
+        const btn = node.closest ? node.closest('button') : null;
+        return btn || node;
+    }
+
+    /**
+     * Generic PiP toggle: if already in PiP, exit; otherwise request PiP.
+     * @param {Object} opts
+     * @param {Function} opts.getVideo - Returns the video element to use
+     * @param {Function} [opts.preSync] - Optional pre-sync callback before requesting PiP (e.g. clear caches, monitorState)
+     */
+    async function handleRequestPip({ getVideo, preSync }) {
+        const v = getVideo();
+        if (!v) return;
+        try {
+            if (document.pictureInPictureElement === v) {
+                await document.exitPictureInPicture();
+            } else {
+                if (typeof preSync === 'function') preSync();
+                if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
+                await v.requestPictureInPicture();
+            }
+        } catch (e) { /* Safe catch */ }
+    }
+
+    /**
+     * Re-focuses the PiP window by exiting and re-entering PiP.
+     * Identical logic in all 3 bridges.
+     */
+    function handleFocusPip() {
+        const pipV = document.pictureInPictureElement;
+        if (!pipV) return;
+        document.exitPictureInPicture().then(() => {
+            setTimeout(() => pipV.requestPictureInPicture().catch(() => { }), 100);
+        }).catch(() => { });
+    }
+
+    /**
+     * Generic mute/unmute handler.
+     * @param {HTMLVideoElement} video
+     * @param {boolean} shouldMute
+     * @param {Function} findMuteBtn - Platform-specific mute button finder: (video) => Element|null
+     * @param {Object} [playerApi] - Optional player API object with mute/unMute/isMuted methods (YouTube)
+     */
+    function handleMuteUnmute(video, shouldMute, findMuteBtn, playerApi) {
+        if (!video) return;
+        const muteBtn = findMuteBtn(video);
+        if (muteBtn) {
+            if (video.muted !== shouldMute) muteBtn.click();
+        } else if (playerApi) {
+            if (shouldMute) {
+                if (typeof playerApi.mute === 'function') playerApi.mute(); else video.muted = true;
+            } else {
+                if (typeof playerApi.unMute === 'function') playerApi.unMute(); else video.muted = false;
+            }
+        } else {
+            video.muted = shouldMute;
+        }
+    }
+
+    /**
+     * Generic volume setter with auto-unmute.
+     * @param {HTMLVideoElement} video
+     * @param {number} value - Volume 0-100
+     * @param {Function} setVolFn - Platform-specific volume setter: (video, volume0to100) => void
+     * @param {Function} handleMuteFn - Mute handler for auto-unmute: (video, shouldMute) => void
+     */
+    function handleSetVolume(video, value, setVolFn, handleMuteFn) {
+        if (!video || !Number.isFinite(value)) return;
+        const vol = Math.max(0, Math.min(1, value / 100));
+        if (vol > 0 && video.muted) handleMuteFn(video, false);
+        setVolFn(video, Math.round(vol * 100));
+    }
+
     window.BridgeUtils = {
         ACTIONS,
         getActiveVideo: getActiveVideoFast,
@@ -531,6 +613,11 @@
         signalNavigation,
         isNavigating,
         switchToVideo,
+        normalizeToButton,
+        handleRequestPip,
+        handleFocusPip,
+        handleMuteUnmute,
+        handleSetVolume,
         _refreshActiveVideo: refreshActiveVideo
     };
 

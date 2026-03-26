@@ -147,7 +147,7 @@
 
     // Initial state check
     if (_runtime) {
-        _runtime.sendMessage({ type: "REQUEST_PIP_STATE" }, (res) => {
+        _runtime.sendMessage({ type: "GET_PIP_STATE" }, (res) => {
             const visibleState = (res && res.effectiveUiVisible !== undefined) ? res.effectiveUiVisible : (res && res.state && res.state.uiVisible !== undefined ? res.state.uiVisible : true);
 
             if (res && res.state) {
@@ -268,8 +268,11 @@
         window.removeEventListener('pagehide', cleanup);
     }
 
+    // [Bfcache Fix] Do NOT cleanup on pagehide. 
+    // This script should persist to maintain visibility sync after back-navigation.
     window._pipUiVisibilityListenerCleanup = cleanup;
-    window.addEventListener('pagehide', cleanup);
+    // window.addEventListener('pagehide', cleanup); // REMOVED: Breaks bfcache restoration
+
 
     // Default tracking for generic sites (reports basic PiP activation if no specific bridge is present)
     window.PiPUtils.trackPiPState({

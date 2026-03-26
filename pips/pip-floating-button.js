@@ -60,10 +60,9 @@
                     }, 300);
                 });
                 domObserver.observe(document.documentElement, { childList: true, subtree: true });
-                window.addEventListener('pagehide', () => {
-                    domObserver.disconnect();
-                    if (_moTimer) { clearTimeout(_moTimer); _moTimer = null; }
-                }, { once: true });
+                // [Bfcache Fix] Do NOT disconnect on pagehide; let it persist for restoration.
+                // MutationObserver will naturally stop firing when page is hidden and resume on pageshow.
+
             };
 
             const existing = document.getElementById(id);
@@ -74,9 +73,8 @@
                 const b = document.getElementById(id);
                 if (b) { clearInterval(t); _onBtnReady(b); }
             }, 50);
-            window.addEventListener('pagehide', () => clearInterval(t), { once: true });
+            // [Bfcache Fix] Keep polling alive if still searching for body.
 
-            window.addEventListener('pagehide', () => clearInterval(t), { once: true });
         },
 
         isActive() {
@@ -220,12 +218,8 @@
                 setTimeout(() => { if (parentBtn.matches(':hover')) { syncPosition(); showBall(); } }, 50);
             };
             window.addEventListener('pointerup', onPointerUp);
-            window.addEventListener('pagehide', () => {
-                attrObserver.disconnect();
-                window.removeEventListener('scroll', syncPosition, { capture: true });
-                window.removeEventListener('resize', syncPosition);
-                window.removeEventListener('pointerup', onPointerUp);
-            }, { once: true });
+            // [Bfcache Fix] Do NOT disconnect on pagehide; let it persist for restoration.
+
 
             // ---- Show when hovering parent ----
             parentBtn.addEventListener('mouseenter', () => { syncPosition(); showBall(); });
@@ -300,7 +294,8 @@
                         }, 2000); // Throttled to 2s to match old intensity but event-driven
                     });
                     vObs.observe(document.documentElement, { childList: true, subtree: true });
-                    window.addEventListener('pagehide', () => vObs.disconnect(), { once: true });
+                    // [Bfcache Fix] Keep observer alive.
+
                 }
                 return;
             }
@@ -428,10 +423,8 @@
                 }, 1000);
             });
             videoObserver.observe(document.documentElement, { childList: true, subtree: true });
-            window.addEventListener('pagehide', () => {
-                videoObserver.disconnect();
-                if (throttleTimer) { clearTimeout(throttleTimer); throttleTimer = null; }
-            }, { once: true });
+            // [Bfcache Fix] Keep observer alive.
+
 
             if (document.querySelector('video')) revealBtn();
 
@@ -439,10 +432,8 @@
             const onLeavePiP = () => { _pipActive = false; this._updateFallbackState(btn, false); };
             document.addEventListener('enterpictureinpicture', onEnterPiP);
             document.addEventListener('leavepictureinpicture', onLeavePiP);
-            window.addEventListener('pagehide', () => {
-                document.removeEventListener('enterpictureinpicture', onEnterPiP);
-                document.removeEventListener('leavepictureinpicture', onLeavePiP);
-            }, { once: true });
+            // [Bfcache Fix] Keep PiP events alive.
+
             window.PiPFloatingButton.updateFallbackUI = (state) => {
                 _pipActive = !!state;
                 this._updateFallbackState(btn, state);
@@ -476,10 +467,14 @@
             };
             document.addEventListener('visibilitychange', _onVisChange);
 
-            window.addEventListener('pagehide', () => {
-                chrome.runtime.onMessage.removeListener(_onMsg);
-                document.removeEventListener('visibilitychange', _onVisChange);
-            }, { once: true });
+            // [Bfcache Fix] CRITICAL: Do NOT remove message listener.
+            // If removed, the tab stays dead after bfcache restoration.
+            // [Bfcache Fix] Re-sync state when page is restored from memory.
+            document.addEventListener('UNIP_BFCACHE_RESTORED', (e) => {
+                const state = e.detail?.state;
+                if (state?.active) onEnterPiP();
+                else onLeavePiP();
+            });
 
             return btn;
         },

@@ -11,12 +11,10 @@
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
         window.PiPUtils.trackPiPState({
-            onEnter: (video) => {
-                setActive();
+            onEnter: () => {
                 // Persistent across swaps (cleared on actual exit below)
             },
             onExit: () => {
-                setInactive();
                 if (window.__pipExt) window.__pipExt.isTriggered = false;
             },
             controlEventName: 'Twitch_Control_Event',
@@ -65,16 +63,7 @@
     });
 
     // --- Core Functionality ---
-    function togglePiP() {
-        if (window.PiPFloatingButton?.isActive?.()) {
-            // PiP is active (may be in another tab) — route exit via background
-            try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
-            return;
-        }
-        window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
-        window.__pipExt.isTriggered = true;
-        document.dispatchEvent(new CustomEvent('Twitch_Control_Event', { detail: { action: 'REQUEST_PIP' } }));
-    }
+    const togglePiP = window.PiPUtils.createTogglePiP('Twitch_Control_Event');
 
     // --- PiP Button & Selector Ball (via universal manager) ---
     window.PiPFloatingButton?.init({
@@ -94,11 +83,7 @@
             'CHANGE_VOLUME': (msg) => ({ action: 'SET_VOLUME', value: msg.volume }),
             'TOGGLE_MUTE_VIDEO': (msg) => ({ action: msg.muted ? 'MUTE' : 'UNMUTE' }),
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
-            'NAVIGATE_VIDEO': (msg) => {
-                window.__pipIgnoreNextPopstate = true;
-                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
-                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
-            },
+            'NAVIGATE_VIDEO': window.PiPUtils.createNavigateRelay(),
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
             'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' }),
