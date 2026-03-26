@@ -9,7 +9,7 @@
 
     let isSelecting = false;
     let highlightOverlay = null;
-    let selectorBall = null;
+    // Selector ball is created/managed by pip-floating-button.js
     let targetVideo = null;
     let isSupportedPlatform = false;
 
@@ -70,10 +70,8 @@
         });
         _pipSelectorState.runtimeListeners.length = 0;
 
-        if (selectorBall) {
-            selectorBall.remove();
-            selectorBall = null;
-        }
+        const ball = document.getElementById('pipSelectorBall');
+        if (ball) ball.remove();
         if (highlightOverlay) {
             highlightOverlay.remove();
             highlightOverlay = null;
@@ -178,41 +176,28 @@
                 break;
 
             // ---- Generic video controls (non-supported platforms only) ----
-            case 'CHANGE_VOLUME': {
+            case 'CHANGE_VOLUME':
+            case 'TOGGLE_MUTE_VIDEO':
+            case 'TOGGLE_PLAY':
+            case 'SEEK_VIDEO':
+            case 'NAVIGATE_VIDEO': {
                 if (isSupportedPlatform) break;
                 const video = document.pictureInPictureElement || document.querySelector('video');
                 if (!video) break;
-                const vol = Math.max(0, Math.min(1, message.volume / 100));
-                if (vol > 0 && video.muted) video.muted = false;
-                video.volume = vol;
-                break;
-            }
-            case 'TOGGLE_MUTE_VIDEO': {
-                if (isSupportedPlatform) break;
-                const video = document.pictureInPictureElement || document.querySelector('video');
-                if (video) video.muted = !!message.muted;
-                break;
-            }
-            case 'TOGGLE_PLAY': {
-                if (isSupportedPlatform) break;
-                const video = document.pictureInPictureElement || document.querySelector('video');
-                if (video) video.paused ? video.play() : video.pause();
-                break;
-            }
-            case 'SEEK_VIDEO': {
-                if (isSupportedPlatform) break;
-                const video = document.pictureInPictureElement || document.querySelector('video');
-                if (video && Number.isFinite(message.offset)) {
-                    const newTime = Math.max(0, Math.min(video.currentTime + message.offset, video.duration || Infinity));
-                    video.currentTime = newTime;
-                }
-                break;
-            }
-            case 'NAVIGATE_VIDEO': {
-                if (isSupportedPlatform) break;
-                // On generic pages, navigate by seeking ±10s as a reasonable fallback
-                const video = document.pictureInPictureElement || document.querySelector('video');
-                if (video) {
+
+                if (message.type === 'CHANGE_VOLUME') {
+                    const vol = Math.max(0, Math.min(1, message.volume / 100));
+                    if (vol > 0 && video.muted) video.muted = false;
+                    video.volume = vol;
+                } else if (message.type === 'TOGGLE_MUTE_VIDEO') {
+                    video.muted = !!message.muted;
+                } else if (message.type === 'TOGGLE_PLAY') {
+                    video.paused ? video.play() : video.pause();
+                } else if (message.type === 'SEEK_VIDEO') {
+                    if (Number.isFinite(message.offset)) {
+                        video.currentTime = Math.max(0, Math.min(video.currentTime + message.offset, video.duration || Infinity));
+                    }
+                } else if (message.type === 'NAVIGATE_VIDEO') {
                     const delta = message.direction === 'next' ? 10 : -10;
                     video.currentTime = Math.max(0, Math.min(video.currentTime + delta, video.duration || Infinity));
                 }
@@ -267,10 +252,11 @@
             log.info('Selection mode active.');
         }
 
-        if (selectorBall) {
-            selectorBall.style.opacity = '1';
-            selectorBall.style.transform = 'scale(1)';
-            selectorBall.style.pointerEvents = 'all';
+        const activeBall = document.getElementById('pipSelectorBall');
+        if (activeBall) {
+            activeBall.style.opacity = '1';
+            activeBall.style.transform = 'scale(1)';
+            activeBall.style.pointerEvents = 'all';
         }
 
         highlightOverlay = document.createElement('div');
@@ -425,6 +411,7 @@
 
                     // --- TARGETED SHIELDS (TikTok): Block only video previews, allow everything else ---
                     if (window.location.hostname.includes('tiktok.com')) {
+                        let _shieldAbortCtrl = null;
                         const toggleShields = (enable) => {
                             const shieldsMap = new Map(); // parent -> shield
 
@@ -546,8 +533,9 @@
                                 pipShieldObserver.observe(document.body, { childList: true, subtree: true });
                                 syncShields();
 
-                                trackListener(window, 'scroll', syncShields, { passive: true, capture: true });
-                                trackListener(window, 'resize', syncShields);
+                                _shieldAbortCtrl = new AbortController();
+                                window.addEventListener('scroll', syncShields, { passive: true, capture: true, signal: _shieldAbortCtrl.signal });
+                                window.addEventListener('resize', syncShields, { signal: _shieldAbortCtrl.signal });
 
                                 log.info('Targeted Shields ACTIVE.');
 
@@ -561,8 +549,7 @@
                                 document.querySelectorAll('[data-has-pip-shield]').forEach(el => delete el.dataset.hasPipShield);
                                 shieldsMap.clear();
 
-                                removeTrackedListener(window, 'scroll', syncShields, { passive: true, capture: true });
-                                removeTrackedListener(window, 'resize', syncShields);
+                                if (_shieldAbortCtrl) { _shieldAbortCtrl.abort(); _shieldAbortCtrl = null; }
 
                                 log.info('🔓 Targeted Shields REMOVED.');
                             }
@@ -597,7 +584,7 @@
 
                 } catch (err) {
                     log.error('Failed to activate PiP:', err);
-                    showErrorFeedback(selectorBall, "PiP Request Failed");
+                    showErrorFeedback(document.getElementById('pipSelectorBall'), "PiP Request Failed");
                 }
 
                 // CRITICAL: Cleanup globally!
@@ -669,15 +656,13 @@
         }
 
         // Ensure ball hides if not hovered after selection ends
-        if (selectorBall) {
-            // Re-trigger hide logic
+        const exitBall = document.getElementById('pipSelectorBall');
+        if (exitBall) {
             setTimeout(() => {
-                const parentBtn = selectorBall._parentBtn; // We need to store this or find it
-                const isHovered = selectorBall.matches(':hover') || (parentBtn && parentBtn.matches(':hover'));
-                if (!isHovered && !isSelecting) {
-                    selectorBall.style.opacity = '0';
-                    selectorBall.style.transform = 'scale(0)';
-                    selectorBall.style.pointerEvents = 'none';
+                if (!exitBall.matches(':hover') && !isSelecting) {
+                    exitBall.style.opacity = '0';
+                    exitBall.style.transform = 'scale(0)';
+                    exitBall.style.pointerEvents = 'none';
                 }
             }, 100);
         }

@@ -192,7 +192,11 @@
 
         showHudMessage: (hudEl, text, color, glow) => {
             if (!hudEl) return;
-            hudEl.innerHTML = `<span style="filter: drop-shadow(${glow})">${text}</span>`;
+            hudEl.textContent = '';
+            const span = document.createElement('span');
+            span.style.filter = `drop-shadow(${glow})`;
+            span.textContent = text;
+            hudEl.appendChild(span);
             hudEl.style.color = color;
             hudEl.style.opacity = "1";
             hudEl.style.transform = "translate(-50%, -50%) scale(1.1)";

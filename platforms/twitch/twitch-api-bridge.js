@@ -55,7 +55,16 @@
             VIDEO_STATE_EVENTS.forEach(evt => video.addEventListener(evt, monitorState));
         }
 
+        // Ownership filter
+        const currentPiP = document.pictureInPictureElement;
+        if (currentPiP && video !== currentPiP) return;
+
+        // Filter: Only ignore 'pause' during navigation to prevent flickering.
+        // 'Play' events are ALWAYS trusted as they signal a successful landing.
         const playing = !video.paused;
+        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
+        if (isNavigating && !playing) return;
+
         const volume = Math.round(video.volume * 100);
         const muted = video.muted;
         const isLive = detectIsLive(video);

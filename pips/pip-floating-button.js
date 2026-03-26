@@ -274,7 +274,6 @@
             this._initGlobalSync();
 
             // IFRAME LOGIC: Just notify background if we have video, don't create button
-            // IFRAME LOGIC: Just notify background if we have video, don't create button
             if (window !== window.top) {
                 const checkVids = () => {
                     if (document.querySelector('video')) {
@@ -344,22 +343,17 @@
                 btn.style.boxShadow = '0 4px 15px rgba(0, 0, 0, 0.3)';
             });
 
-            // Tracks whether PiP is currently active.
-            // document.pictureInPictureElement can be null in the top frame when PiP
-            // is running inside a cross-origin iframe, so we keep our own flag
-            // synchronised via updateFallbackUI and the pip events below.
-            let _pipActive = !!document.pictureInPictureElement;
+            // PiP active state is stored on btn._pipActive by _updateFallbackState,
+            // synced via _initGlobalSync, DOM events, and updateFallbackUI.
 
             btn.addEventListener('click', () => {
                 const api = window.PiPSelectorAPI;
-                if (_pipActive) {
+                if (btn._pipActive) {
                     _send('EXIT_PIP');
-                    _pipActive = false;
                     this._updateFallbackState(btn, false);
                 } else if (api?.isSelecting) {
                     _send('STOP_SELECTION_MODE_GLOBAL');
                     api.stopSelection();
-                    _pipActive = false;
                     this._updateFallbackState(btn, false);
                 } else {
                     _send('ACTIVATE_SELECTION_MODE');
@@ -422,50 +416,24 @@
                     if (document.querySelector('video')) { revealBtn(); videoObserver.disconnect(); }
                 }, 1000);
             });
-            videoObserver.observe(document.documentElement, { childList: true, subtree: true });
+            videoObserver.observe(document.body || document.documentElement, { childList: true, subtree: true });
             // [Bfcache Fix] Keep observer alive.
 
 
             if (document.querySelector('video')) revealBtn();
 
-            const onEnterPiP = () => { _pipActive = true; this._updateFallbackState(btn, true); };
-            const onLeavePiP = () => { _pipActive = false; this._updateFallbackState(btn, false); };
+            const onEnterPiP = () => { this._updateFallbackState(btn, true); };
+            const onLeavePiP = () => { this._updateFallbackState(btn, false); };
             document.addEventListener('enterpictureinpicture', onEnterPiP);
             document.addEventListener('leavepictureinpicture', onLeavePiP);
             // [Bfcache Fix] Keep PiP events alive.
 
             window.PiPFloatingButton.updateFallbackUI = (state) => {
-                _pipActive = !!state;
                 this._updateFallbackState(btn, state);
             };
 
-            // Initial state check for global sync
-            if (window.PiPUtils?.safeSendMessage) {
-                window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
-                    if (res?.state?.active) onEnterPiP();
-                });
-            }
-
-            // Real-time listener for global state changes
-            const _onMsg = (msg) => {
-                if (msg.type === 'PIP_ACTIVATED' || msg.type === 'PIP_SESSION_STARTED') {
-                    onEnterPiP();
-                } else if (msg.type === 'HIDE_VOLUME_PANEL' || msg.type === 'PIP_DEACTIVATED') {
-                    onLeavePiP();
-                }
-            };
-            chrome.runtime.onMessage.addListener(_onMsg);
-
-            // Sync state when tab becomes visible (compensates for lazy background sync)
-            const _onVisChange = () => {
-                if (document.visibilityState === 'visible' && window.PiPUtils?.safeSendMessage) {
-                    window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
-                        if (res?.state?.active) onEnterPiP();
-                        else onLeavePiP();
-                    });
-                }
-            };
-            document.addEventListener('visibilitychange', _onVisChange);
+            // State sync (message listener, initial check, visibilitychange) is
+            // handled centrally by _initGlobalSync → _refreshManagedIcons → _updateFallbackState.
 
             // [Bfcache Fix] CRITICAL: Do NOT remove message listener.
             // If removed, the tab stays dead after bfcache restoration.
@@ -515,6 +483,7 @@
         _updateFallbackState(btn, forceActiveState = null) {
             if (!btn) return;
             const isActive = forceActiveState !== null ? forceActiveState : !!document.pictureInPictureElement;
+            btn._pipActive = isActive;
             btn.innerHTML = isActive ? this.getActiveIcon() : this.getInactiveIcon();
             btn.title = isActive ? chrome.i18n.getMessage("pipBtnExitTitle") : chrome.i18n.getMessage("pipSelectorTitle");
             btn.style.background = isActive ? 'rgba(30, 30, 35, 0.9)' : 'rgba(30, 30, 35, 0.7)';

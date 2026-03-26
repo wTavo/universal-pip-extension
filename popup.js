@@ -286,9 +286,5 @@ document.addEventListener('DOMContentLoaded', () => {
                 log.error('Error executing command:', error);
             }
         });
-
-        card.addEventListener('mouseenter', () => {
-            card.style.cursor = 'pointer';
-        });
     });
 });
