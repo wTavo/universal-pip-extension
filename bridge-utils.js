@@ -602,6 +602,63 @@
         setVolFn(video, Math.round(vol * 100));
     }
 
+    /**
+     * Generalized live-status detector.
+     * @param {HTMLVideoElement} video
+     * @param {string|string[]} extraSelectors - Platform-specific live indicators
+     * @returns {boolean}
+     */
+    function detectIsLive(video, extraSelectors = []) {
+        if (!video) return false;
+        const durationIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
+        if (durationIsLive) return true;
+
+        const selectors = Array.isArray(extraSelectors) ? extraSelectors : [extraSelectors];
+        for (const sel of selectors) {
+            if (document.querySelector(sel)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Generalized state monitoring block.
+     * @param {Object} opts
+     * @param {string} opts.platform - e.g. 'tiktok'
+     * @param {Function} opts.getLikeStatus - (video) => boolean
+     * @param {Function} opts.getFavoriteStatus - (video) => boolean
+     * @param {Function} opts.detectIsLive - (video) => boolean
+     * @param {Function} opts.onStateChange - (state) => void
+     * @returns {Function} monitorState function
+     */
+    function createMonitorState(opts) {
+        let lastState = null;
+        return (e, forceBroadcast = false) => {
+            const currentPiP = document.pictureInPictureElement;
+            const targetVideo = currentPiP || (e instanceof HTMLVideoElement ? e : (e?.target instanceof HTMLVideoElement ? e.target : getActiveVideoFast()));
+
+            if (!targetVideo) return;
+            if (!currentPiP && !forceBroadcast) return;
+            if (currentPiP && targetVideo !== currentPiP) return;
+
+            const playing = !targetVideo.paused;
+            if (isNavigating() && !playing) return;
+
+            const state = {
+                playing,
+                volume: Math.round(targetVideo.volume * 100),
+                muted: targetVideo.muted,
+                liked: opts.getLikeStatus ? opts.getLikeStatus(targetVideo) : false,
+                favorited: opts.getFavoriteStatus ? opts.getFavoriteStatus(targetVideo) : false,
+                isLive: opts.detectIsLive ? opts.detectIsLive(targetVideo) : false
+            };
+
+            if (lastState && Object.keys(state).every(k => state[k] === lastState[k])) return;
+
+            lastState = state;
+            opts.onStateChange(state);
+        };
+    }
+
     window.BridgeUtils = {
         ACTIONS,
         getActiveVideo: getActiveVideoFast,
@@ -618,6 +675,8 @@
         handleFocusPip,
         handleMuteUnmute,
         handleSetVolume,
+        detectIsLive,
+        createMonitorState,
         _refreshActiveVideo: refreshActiveVideo
     };
 

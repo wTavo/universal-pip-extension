@@ -165,39 +165,40 @@
     let isPipActive = false;
 
     function onRuntimeMessage(message) {
+        const { MSG } = window.PIP_CONSTANTS;
         switch (message.type) {
-            case 'START_SELECTION_MODE': startSelectionMode(); break;
-            case 'STOP_SELECTION_MODE': stopSelectionMode(); break;
-            case 'SYNC_PIP_STATE': window.PiPFloatingButton?.updateFallbackUI?.(message.active); break;
-            case 'EXIT_PIP':
+            case MSG.START_SELECTION_MODE: startSelectionMode(); break;
+            case MSG.STOP_SELECTION_MODE: stopSelectionMode(); break;
+            case MSG.SYNC_PIP_STATE: window.PiPFloatingButton?.updateFallbackUI?.(message.active); break;
+            case MSG.EXIT_PIP:
                 if (document.pictureInPictureElement) {
                     document.exitPictureInPicture().catch(e => log.error('exitPiP failed:', e));
                 }
                 break;
 
             // ---- Generic video controls (non-supported platforms only) ----
-            case 'CHANGE_VOLUME':
-            case 'TOGGLE_MUTE_VIDEO':
-            case 'TOGGLE_PLAY':
-            case 'SEEK_VIDEO':
-            case 'NAVIGATE_VIDEO': {
+            case MSG.CHANGE_VOLUME:
+            case MSG.TOGGLE_MUTE_VIDEO:
+            case MSG.TOGGLE_PLAY:
+            case MSG.SEEK_VIDEO:
+            case MSG.NAVIGATE_VIDEO: {
                 if (isSupportedPlatform) break;
                 const video = document.pictureInPictureElement || document.querySelector('video');
                 if (!video) break;
 
-                if (message.type === 'CHANGE_VOLUME') {
+                if (message.type === MSG.CHANGE_VOLUME) {
                     const vol = Math.max(0, Math.min(1, message.volume / 100));
                     if (vol > 0 && video.muted) video.muted = false;
                     video.volume = vol;
-                } else if (message.type === 'TOGGLE_MUTE_VIDEO') {
+                } else if (message.type === MSG.TOGGLE_MUTE_VIDEO) {
                     video.muted = !!message.muted;
-                } else if (message.type === 'TOGGLE_PLAY') {
+                } else if (message.type === MSG.TOGGLE_PLAY) {
                     video.paused ? video.play() : video.pause();
-                } else if (message.type === 'SEEK_VIDEO') {
+                } else if (message.type === MSG.SEEK_VIDEO) {
                     if (Number.isFinite(message.offset)) {
                         video.currentTime = Math.max(0, Math.min(video.currentTime + message.offset, video.duration || Infinity));
                     }
-                } else if (message.type === 'NAVIGATE_VIDEO') {
+                } else if (message.type === MSG.NAVIGATE_VIDEO) {
                     const delta = message.direction === 'next' ? 10 : -10;
                     video.currentTime = Math.max(0, Math.min(video.currentTime + delta, video.duration || Infinity));
                 }
@@ -217,14 +218,18 @@
         if (!video) return;
 
         const sendState = () => {
-            chrome.runtime.sendMessage({
-                type: 'UPDATE_VOLUME_STATE',
+            const { MSG } = window.PIP_CONSTANTS;
+            window.PiPUtils.safeSendMessage({
+                type: MSG.UPDATE_VOLUME_STATE,
                 volume: Math.round(video.volume * 100),
                 muted: video.muted
             });
         };
 
-        const sendPlay = () => chrome.runtime.sendMessage({ type: 'UPDATE_PLAYBACK_STATE', playing: !video.paused });
+        const sendPlay = () => {
+            const { MSG } = window.PIP_CONSTANTS;
+            window.PiPUtils.safeSendMessage({ type: MSG.UPDATE_PLAYBACK_STATE, playing: !video.paused });
+        };
 
         video.addEventListener('volumechange', sendState);
         video.addEventListener('play', sendPlay);
@@ -570,8 +575,10 @@
                     }
 
                     if (!isSupportedPlatform) {
-                        chrome.runtime.sendMessage({
-                            type: 'PIP_ACTIVATED',
+                        const { MSG } = window.PIP_CONSTANTS;
+                    window.PiPUtils.safeSendMessage({ type: MSG.EXIT_PIP });
+                        window.PiPUtils.safeSendMessage({
+                            type: MSG.PIP_ACTIVATED,
                             platform: 'generic',
                             isSelectorMode: true,
                             pipMode: "manual",
@@ -587,8 +594,9 @@
                     showErrorFeedback(document.getElementById('pipSelectorBall'), "PiP Request Failed");
                 }
 
-                // CRITICAL: Cleanup globally!
-                chrome.runtime.sendMessage({ type: 'STOP_SELECTION_MODE_GLOBAL' });
+                const { MSG } = window.PIP_CONSTANTS;
+                    window.PiPUtils.safeSendMessage({ type: MSG.PIP_DEACTIVATED, force: true });
+                window.PiPUtils.safeSendMessage({ type: MSG.STOP_SELECTION_MODE_GLOBAL });
                 // Cleanup immediately after action locally too
                 stopSelectionMode();
             }

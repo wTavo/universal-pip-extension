@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, enableAutoSwitching, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, enableAutoSwitching, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume, detectIsLive, createMonitorState } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -28,79 +28,48 @@
         return document.querySelector(SELECTORS.MUTE_BTN);
     }
 
-    function detectIsLive(video) {
-        if (!video) return false;
-        const durationIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-        const hasLiveBadge = !!document.querySelector(SELECTORS.LIVE_BADGE);
-        return durationIsLive || hasLiveBadge;
+    function detectIsLiveLocal(video) {
+        return detectIsLive(video, [SELECTORS.LIVE_BADGE]);
     }
 
     // -------- STATE --------
 
-    let lastBroadcastState = null;
-    let monitoredVideo = null;
-
-    const monitorState = () => {
-        const video = getActiveVideo();
-        if (!video) return;
-
-        const pipActive = !!document.pictureInPictureElement;
-
-        if (pipActive && video !== monitoredVideo) {
-            if (monitoredVideo) {
-                VIDEO_STATE_EVENTS.forEach(evt => monitoredVideo.removeEventListener(evt, monitorState));
-            }
-            monitoredVideo = video;
-            lastBroadcastState = null;
-            VIDEO_STATE_EVENTS.forEach(evt => video.addEventListener(evt, monitorState));
+    const monitorState = createMonitorState({
+        platform: 'twitch',
+        detectIsLive: detectIsLiveLocal,
+        onStateChange: (state) => {
+            document.dispatchEvent(new CustomEvent('Twitch_State_Update', { detail: state }));
         }
+    });
 
-        // Ownership filter
-        const currentPiP = document.pictureInPictureElement;
-        if (currentPiP && video !== currentPiP) return;
+    function forceMonitorSync() {
+        monitorState(null, true);
+    }
 
-        // Filter: Only ignore 'pause' during navigation to prevent flickering.
-        // 'Play' events are ALWAYS trusted as they signal a successful landing.
-        const playing = !video.paused;
-        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-        if (isNavigating && !playing) return;
-
-        const volume = Math.round(video.volume * 100);
-        const muted = video.muted;
-        const isLive = detectIsLive(video);
-
-        if (lastBroadcastState &&
-            lastBroadcastState.playing === playing &&
-            lastBroadcastState.volume === volume &&
-            lastBroadcastState.muted === muted &&
-            lastBroadcastState.isLive === isLive) {
-            return;
-        }
-
-        const state = { playing, volume, muted, isLive };
-        lastBroadcastState = state;
-        document.dispatchEvent(new CustomEvent('Twitch_State_Update', { detail: state }));
-    };
+    function addVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.addEventListener(evt, monitorState, { capture: true, passive: true });
+        });
+    }
+    function removeVideoStateListeners() {
+        VIDEO_STATE_EVENTS.forEach(evt => {
+            document.removeEventListener(evt, monitorState, { capture: true });
+        });
+    }
 
     // Reset state when PiP enters so the UI gets a fresh update.
     document.addEventListener('enterpictureinpicture', () => {
-        lastBroadcastState = null;
-        requestAnimationFrame(monitorState);
+        addVideoStateListeners();
+        requestAnimationFrame(forceMonitorSync);
     });
 
-    // Clean up when PiP exits: detach video event listeners
+    // Clean up when PiP exits
     document.addEventListener('leavepictureinpicture', () => {
-        if (monitoredVideo) {
-            VIDEO_STATE_EVENTS.forEach(
-                evt => monitoredVideo.removeEventListener(evt, monitorState)
-            );
-            monitoredVideo = null;
-        }
-        lastBroadcastState = null;
+        removeVideoStateListeners();
     });
 
     if (enableAutoSwitching) {
-        enableAutoSwitching(monitorState);
+        enableAutoSwitching(forceMonitorSync);
     }
 
     // -------- CONTROL EVENTS --------
@@ -112,7 +81,7 @@
     function handleRequestPipLocal() {
         return handleRequestPip({
             getVideo: getActiveVideo,
-            preSync: () => monitorState()
+            preSync: () => forceMonitorSync()
         });
     }
 
@@ -144,7 +113,7 @@
             case ACTIONS.MUTE: handleMuteLocal(video, true); break;
             case ACTIONS.UNMUTE: handleMuteLocal(video, false); break;
             case ACTIONS.SET_VOLUME: handleSetVolumeLocal(video, value); break;
-            case ACTIONS.CHECK_STATUS: monitorState(); break;
+            case ACTIONS.CHECK_STATUS: forceMonitorSync(); break;
         }
     });
 })();

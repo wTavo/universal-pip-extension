@@ -176,7 +176,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const globalBadge = document.getElementById('global-status');
             const currentBadge = document.getElementById('current-status');
 
-            chrome.runtime.sendMessage({ type: 'GET_UI_STATE' }, (response) => {
+            const { MSG } = window.PIP_CONSTANTS;
+            chrome.runtime.sendMessage({ type: MSG.GET_UI_STATE }, (response) => {
                 if (response && response.uiVisible !== undefined) {
                     if (response.uiVisible) {
                         globalBadge.classList.remove('hidden');
@@ -189,7 +190,8 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (tab && tab.id) {
-                chrome.tabs.sendMessage(tab.id, { type: 'GET_UI_VISIBILITY' }, (response) => {
+                const { MSG } = window.PIP_CONSTANTS;
+                chrome.tabs.sendMessage(tab.id, { type: MSG.GET_UI_VISIBILITY }, (response) => {
                     if (chrome.runtime.lastError) {
                         currentBadge.classList.remove('hidden');
                         currentBadge.querySelector('.status-value').textContent = chrome.i18n.getMessage("statusNA");
@@ -257,10 +259,11 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
+                const { MSG } = window.PIP_CONSTANTS;
                 if (command === 'hide_ui') {
                     const scope = hideScopeToggle.checked ? 'global' : 'platform';
                     chrome.runtime.sendMessage({
-                        type: 'EXECUTE_COMMAND',
+                        type: MSG.EXECUTE_COMMAND,
                         command: 'hide_ui',
                         scope: scope,
                         tabUrl: tab.url
@@ -269,16 +272,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 } else if (command === 'show_ui') {
                     const scope = hideScopeToggle.checked ? 'global' : 'platform';
                     chrome.runtime.sendMessage({
-                        type: 'EXECUTE_COMMAND',
+                        type: MSG.EXECUTE_COMMAND,
                         command: 'show_ui',
                         scope: scope,
                         tabUrl: tab.url
                     });
                     setTimeout(() => updateStatusIndicators(), 200);
                 } else if (command === 'focus_pip') {
-                    chrome.runtime.sendMessage({ type: 'EXECUTE_COMMAND', command: 'focus_pip' });
+                    chrome.runtime.sendMessage({ type: MSG.EXECUTE_COMMAND, command: 'focus_pip' });
                 } else if (command === 'close_pip') {
-                    chrome.runtime.sendMessage({ type: 'EXIT_PIP' });
+                    chrome.runtime.sendMessage({ type: MSG.EXIT_PIP });
                 }
 
                 log.info('Command executed:', command);

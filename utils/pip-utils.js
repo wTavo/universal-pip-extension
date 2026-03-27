@@ -16,33 +16,8 @@
         NAVIGATING_ATTR: 'data-pip-navigating'
     };
 
-    const MSG = Object.freeze({
-        GET_PIP_STATE: 'GET_PIP_STATE',
-        PIP_ACTIVATED: 'PIP_ACTIVATED',
-        PIP_DEACTIVATED: 'PIP_DEACTIVATED',
-        PIP_SESSION_STARTED: 'PIP_SESSION_STARTED',
-        EXIT_PIP: 'EXIT_PIP',
-        SYNC_DRAG_POSITION: 'SYNC_DRAG_POSITION',
-        GET_DRAG_POSITION: 'GET_DRAG_POSITION',
-        SIGNAL_NAVIGATION: 'SIGNAL_NAVIGATION',
-        VALIDATE_PIP_STATUS: 'VALIDATE_PIP_STATUS',
-        CHANGE_VOLUME: 'CHANGE_VOLUME',
-        SET_VOLUME: 'SET_VOLUME',
-        TOGGLE_MUTE: 'TOGGLE_MUTE',
-        MUTE: 'MUTE',
-        UNMUTE: 'UNMUTE',
-        TOGGLE_PLAY: 'TOGGLE_PLAY',
-        NAVIGATE_VIDEO: 'NAVIGATE_VIDEO',
-        TOGGLE_LIKE: 'TOGGLE_LIKE',
-        TOGGLE_FAVORITE: 'TOGGLE_FAVORITE',
-        SHOW_EXTENSION_UI: 'SHOW_EXTENSION_UI',
-        HIDE_EXTENSION_UI: 'HIDE_EXTENSION_UI',
-        EXECUTE_COMMAND: 'EXECUTE_COMMAND',
-        ACTIVATE_SELECTION_MODE: 'ACTIVATE_SELECTION_MODE',
-        START_SELECTION_MODE: 'START_SELECTION_MODE',
-        STOP_SELECTION_MODE_GLOBAL: 'STOP_SELECTION_MODE_GLOBAL',
-        FOCUS_PIP: 'FOCUS_PIP'
-    });
+    // Unified Message Types from constants.js
+    const { MSG } = window.PIP_CONSTANTS || { MSG: {} };
 
     window.PiPUtils = window.PiPUtils || {};
     window.PiPUtils.CONSTANTS = CONSTANTS;
@@ -403,6 +378,16 @@
                     return;
                 }
 
+                // [Fix] TikTok Navigation: If we are in a known navigation grace period (e.g. toggling comments),
+                // do NOT force exit PiP. The browser/DOM will naturally end PiP if the element is destroyed.
+                const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
+                                   document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
+
+                if (isNavigating) {
+                    log.debug('Popstate detected during known navigation - suppressing force exit.');
+                    return;
+                }
+
                 if (document.pictureInPictureElement) {
                     const eventName = window.PiPUtils._controlEventName || 'PIP_Control_Event';
                     document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
@@ -559,18 +544,40 @@
 
         safeSendMessage: function (msg, cb) {
             try {
-                if (!_runtime || !_runtime.sendMessage) return;
+                if (!_runtime || typeof _runtime.sendMessage !== 'function') return;
+                
+                // If the context is invalidated, this will throw
+                if (typeof chrome !== 'undefined' && !chrome.runtime?.id) {
+                    return;
+                }
+
                 let cbCalled = false;
                 const safeCallback = (resp) => {
                     if (cbCalled || typeof cb !== 'function') return;
                     cbCalled = true;
-                    try { cb(resp); } catch (err) { }
+                    try {
+                        const err = _runtime.lastError;
+                        if (err && err.message?.includes('context invalidated')) {
+                            log.debug('Context invalidated - suppressing callback');
+                            return;
+                        }
+                        cb(resp);
+                    } catch (err) { }
                 };
+
                 const maybe = _runtime.sendMessage(msg, safeCallback);
                 if (maybe && typeof maybe.then === 'function') {
-                    maybe.then(safeCallback).catch(() => { });
+                    maybe.then(safeCallback).catch((err) => {
+                        if (err?.message?.includes('context invalidated')) {
+                            log.debug('Context invalidated - suppressing promise catch');
+                        }
+                    });
                 }
-            } catch (err) { }
+            } catch (err) {
+                if (err?.message?.includes('context invalidated')) {
+                    log.debug('Context invalidated - caught synchronously');
+                }
+            }
         },
 
         /**
@@ -582,7 +589,7 @@
         createTogglePiP: function (controlEventName) {
             return function togglePiP() {
                 if (window.PiPFloatingButton?.isActive?.()) {
-                    try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
+                    window.PiPUtils.safeSendMessage({ type: 'EXIT_PIP' });
                     return;
                 }
                 window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
@@ -606,9 +613,7 @@
     });
 
     window.addEventListener('PIP_NAVIGATING', () => {
-        if (_runtime && _runtime.sendMessage) {
-            _runtime.sendMessage({ type: 'SIGNAL_NAVIGATION' });
-        }
+        window.PiPUtils.safeSendMessage({ type: 'SIGNAL_NAVIGATION' });
     });
 
     /**

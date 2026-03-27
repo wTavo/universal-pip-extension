@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume, detectIsLive, createMonitorState } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -145,16 +145,8 @@
 
     // -------- LIVE / AD DETECTION --------
 
-    function detectIsLive(video) {
-        if (!video) return false;
-        const videoIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-        if (videoIsLive) return true;
-        if (video.closest('a[target="tiktok_live_view_window"]')) return true;
-        // Search for live title relative to the video's item first, fallback to global
-        const item = getTikTokItem(video);
-        const searchRoot = item || document;
-        if (searchRoot.querySelector(SELECTORS.LIVE_TITLE)) return true;
-        return false;
+    function detectIsLiveLocal(video) {
+        return detectIsLive(video, [SELECTORS.LIVE_TITLE, '.live-stream-title']);
     }
 
     function detectIsAd(video) {
@@ -164,66 +156,25 @@
 
     // -------- STATE --------
 
-    let lastBroadcastState = null;
-
-    const monitorState = (e, forceBroadcast = false) => {
-        // PRIORITY: If in PiP, always target the PiP element.
-        const currentPiP = document.pictureInPictureElement;
-        
-        const targetVideo = currentPiP || 
-            (e instanceof HTMLVideoElement ? e :
-            (e && e.target instanceof HTMLVideoElement ? e.target :
-                getActiveVideo()));
-
-        if (!targetVideo) return;
-
-        // If video changed, clear cache (only when a DIFFERENT video starts playing)
-        if (e && (e.type === 'play' || e.type === 'playing')) {
-            const eventVideo = e.target || e;
-            if (eventVideo !== lastLikeVideo) {
-                lastLikeVideo = null;
-                cachedLikeBtn = null;
-            }
-            if (eventVideo !== lastFavVideo) {
-                lastFavVideo = null;
-                cachedFavBtn = null;
-            }
+    const monitorState = createMonitorState({
+        platform: 'tiktok',
+        getLikeStatus: getLikeStatus,
+        getFavoriteStatus: getFavoriteStatus,
+        detectIsLive: detectIsLiveLocal,
+        onStateChange: (state) => {
+            const video = document.pictureInPictureElement || getActiveVideo();
+            const isAd = detectIsAd(video);
+            state.isTikTokLive = state.isLive;
+            state.hasFavorite = (state.isTikTokLive || isAd) ? false : !!getFavoriteButton(video);
+            
+            document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
         }
+    });
 
-        // Ownership filter: Suppress background scans unless forced (PiP request) or active PiP.
-        if (!currentPiP && !forceBroadcast) return;
-        if (currentPiP && targetVideo !== currentPiP) return;
-
-        const playing = !targetVideo.paused;
-        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-
-        if (isNavigating && !playing) return;
-
-        const liked = getLikeStatus(targetVideo);
-        const favorited = getFavoriteStatus(targetVideo);
-        const volume = Math.round(targetVideo.volume * 100);
-        const muted = targetVideo.muted;
-        const isTikTokLive = detectIsLive(targetVideo);
-        const isAd = detectIsAd(targetVideo);
-
-        const hasFavorite = (isTikTokLive || isAd) ? false : !!getFavoriteButton(targetVideo);
-
-        // Fast shallow comparison
-        if (lastBroadcastState &&
-            lastBroadcastState.liked === liked &&
-            lastBroadcastState.favorited === favorited &&
-            lastBroadcastState.playing === playing &&
-            lastBroadcastState.volume === volume &&
-            lastBroadcastState.muted === muted &&
-            lastBroadcastState.isTikTokLive === isTikTokLive &&
-            lastBroadcastState.hasFavorite === hasFavorite) {
-            return;
-        }
-
-        const state = { liked, favorited, playing, volume, muted, isTikTokLive, hasFavorite };
-        lastBroadcastState = state;
-        document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
-    };
+    // Manual helper for initial sync or clicks
+    function forceMonitorSync() {
+        monitorState(null, true);
+    }
 
     // Capturing Listeners — added/removed with PiP lifecycle to avoid work when PiP is inactive
     function addVideoStateListeners() {
@@ -388,7 +339,6 @@
 
     // -------- CONTROL EVENTS --------
 
-    // handleRequestPip uses shared BridgeUtils.handleRequestPip with TikTok-specific preSync
     function handleRequestPipLocal() {
         return handleRequestPip({
             getVideo: getActiveVideo,
@@ -396,7 +346,7 @@
                 // FAST SYNC: Force a state report BEFORE browser PiP activation.
                 cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
                 monitorInteractiveElements();
-                monitorState(null, true);
+                forceMonitorSync();
             }
         });
     }
@@ -462,7 +412,7 @@
             case ACTIONS.CHECK_STATUS:
                 cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
                 monitorInteractiveElements();
-                monitorState(null, true);
+                forceMonitorSync();
                 break;
         }
     });

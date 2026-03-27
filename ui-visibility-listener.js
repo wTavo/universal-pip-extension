@@ -109,33 +109,34 @@
 
     // Listener for global commands
     const onRuntimeMessage = (message, sender, sendResponse) => {
+        const { MSG } = window.PIP_CONSTANTS;
         if (!message || typeof message.type !== 'string') {
             if (typeof sendResponse === 'function') sendResponse({ ignored: true });
             return;
         }
-        if (message.type === "HIDE_EXTENSION_UI") {
+        if (message.type === MSG.HIDE_EXTENSION_UI) {
             log.info('Received HIDE command');
             setUIVisibilityState(false);
             syncAllElements(true);
             sendResponse({ success: true });
         }
-        else if (message.type === "SHOW_EXTENSION_UI") {
+        else if (message.type === MSG.SHOW_EXTENSION_UI) {
             log.info('Received SHOW command');
             setUIVisibilityState(true);
             syncAllElements(true);
             sendResponse({ success: true });
         }
-        else if (message.type === "SYNC_SESSION_VISIBILITY") {
+        else if (message.type === MSG.SYNC_SESSION_VISIBILITY) {
             // Handle Domain-Specific visibility overrides centrally
             log.info('Syncing session visibility:', message.visible);
             setUIVisibilityState(!!message.visible);
             syncAllElements(true);
             sendResponse({ success: true });
         }
-        else if (message.type === "VISIBILITY_PING") {
+        else if (message.type === MSG.VISIBILITY_PING) {
             sendResponse({ alive: true });
         }
-        else if (message.type === "GET_UI_VISIBILITY") {
+        else if (message.type === MSG.GET_UI_VISIBILITY) {
             sendResponse({ visible: isUIVisible });
         }
         else {
@@ -147,7 +148,8 @@
 
     // Initial state check
     if (_runtime) {
-        _runtime.sendMessage({ type: "GET_PIP_STATE" }, (res) => {
+        const { MSG } = window.PIP_CONSTANTS;
+        _runtime.sendMessage({ type: MSG.GET_PIP_STATE }, (res) => {
             const visibleState = (res && res.effectiveUiVisible !== undefined) ? res.effectiveUiVisible : (res && res.state && res.state.uiVisible !== undefined ? res.state.uiVisible : true);
 
             if (res && res.state) {
@@ -157,18 +159,16 @@
             }
 
             if (res && res.state && res.state.active) {
-                _runtime.sendMessage({ type: "REQUEST_EARLY_PANEL" });
+                _runtime.sendMessage({ type: MSG.REQUEST_EARLY_PANEL });
             }
         });
     }
 
-    // BFCache restoration: when the user hits the browser back/forward button,
-    // the browser may restore the page from cache without re-running scripts.
-    // The panel DOM is restored with stale state (e.g. old like/favorite status).
-    // This listener detects bfcache restoration and re-syncs the panel state.
+    // BFCache restoration
     window.addEventListener('pageshow', (event) => {
         if (!event.persisted || !_runtime) return;
-        _runtime.sendMessage({ type: "REQUEST_EARLY_PANEL" });
+        const { MSG } = window.PIP_CONSTANTS;
+        _runtime.sendMessage({ type: MSG.REQUEST_EARLY_PANEL });
     });
 
     // MutationObserver to catch elements added dynamically or attributes modified surgically

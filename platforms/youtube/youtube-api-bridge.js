@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, signalNavigation, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, signalNavigation, normalizeToButton, handleRequestPip, handleFocusPip, handleMuteUnmute, handleSetVolume, detectIsLive, createMonitorState } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -110,64 +110,24 @@
 
     // -------- LIVE DETECTION --------
 
-    function detectIsLive(video) {
-        if (!video) return false;
-        const durationIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
-        if (durationIsLive) return true;
-        const urlIsLive = window.location.href.includes('/live');
-        if (urlIsLive) return true;
-        // Search for live badge relative to the player first, fallback to global
-        const player = getPlayer(video);
-        const searchRoot = player || document;
-        return !!searchRoot.querySelector(SELECTORS.LIVE_BADGE);
+    function detectIsLiveLocal(video) {
+        return detectIsLive(video, [SELECTORS.LIVE_BADGE]);
     }
 
     // -------- STATE --------
 
-    let lastBroadcastState = null;
-
-    const monitorState = (e) => {
-        // 1. Context Detection: Prioritize event target or passed element.
-        const targetVideo = (e instanceof HTMLVideoElement) ? e :
-            (e && e.target instanceof HTMLVideoElement) ? e.target :
-                getActiveVideo();
-
-        if (!targetVideo) return;
-
-        // 2. Ownership Filter: If in PiP, ONLY allow updates from the PiP video itself.
-        const currentPiP = document.pictureInPictureElement;
-        if (currentPiP && targetVideo !== currentPiP) {
-            return;
+    const monitorState = createMonitorState({
+        platform: 'youtube',
+        getLikeStatus: getLikeStatus,
+        detectIsLive: detectIsLiveLocal,
+        onStateChange: (state) => {
+            document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: state }));
         }
+    });
 
-        // 3. Filter: Only ignore 'pause' during navigation to prevent flickering.
-        // 'Play' events are ALWAYS trusted as they signal a successful landing.
-        const playing = !targetVideo.paused;
-        const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-
-        if (isNavigating && !playing) {
-            return;
-        }
-
-        const liked = getLikeStatus(targetVideo);
-        const volume = Math.round(targetVideo.volume * 100);
-        const muted = targetVideo.muted;
-        const isLive = detectIsLive(targetVideo);
-
-        // Fast shallow comparison
-        if (lastBroadcastState &&
-            lastBroadcastState.liked === liked &&
-            lastBroadcastState.playing === playing &&
-            lastBroadcastState.volume === volume &&
-            lastBroadcastState.muted === muted &&
-            lastBroadcastState.isLive === isLive) {
-            return;
-        }
-
-        const state = { liked, playing, volume, muted, isLive };
-        lastBroadcastState = state;
-        document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: state }));
-    };
+    function forceMonitorSync() {
+        monitorState(null, true);
+    }
 
     // Capturing Listeners — added/removed with PiP lifecycle to avoid work when PiP is inactive
     function addVideoStateListeners() {
@@ -190,7 +150,7 @@
         connectStructuralObservers();
 
         // Immediate sync upon entry
-        requestAnimationFrame(monitorState);
+        requestAnimationFrame(forceMonitorSync);
 
         // Safety secondary scan for slow DOMs
         setTimeout(() => {
@@ -310,14 +270,11 @@
         if (nextPageType === 'OTHER' || typeChanged) {
             // Immediate exit for major changes
             document.exitPictureInPicture().catch(() => { });
-            // Signal background immediately to prevent ghost UI on next page
-            try { chrome.runtime.sendMessage({ type: 'PIP_DEACTIVATED', force: true }); } catch (err) { }
         } else {
             // Signal background to enter grace period (e.g., Watch -> Watch)
             // This prevents the volume panel from being hidden and the icon from resetting
             // when the browser natively exits PiP during DOM replacement.
             if (signalNavigation) signalNavigation();
-            try { chrome.runtime.sendMessage({ type: 'SIGNAL_NAVIGATION' }); } catch (err) { }
         }
     });
 
@@ -329,7 +286,7 @@
         if (document.pictureInPictureElement) {
             setupShortsObserver();
             monitorInteractiveElements();
-            monitorState();
+            forceMonitorSync();
         }
     });
 
@@ -387,7 +344,7 @@
                 // Force sync before PiP
                 lastActiveLikeBtn = null; // Clear to force re-attachment
                 monitorInteractiveElements();
-                monitorState(getActiveVideo());
+                forceMonitorSync();
             }
         });
     }
@@ -433,7 +390,7 @@
                 lastLikeVideo = null;
                 lastBroadcastState = null;
                 manageLikeController();
-                monitorState();
+                forceMonitorSync();
                 break;
         }
     });

@@ -80,16 +80,7 @@
     });
 
     // --- Core Functionality Updated ---
-    function togglePiP() {
-        if (window.PiPFloatingButton?.isActive?.()) {
-            // PiP is active (may be in another tab) — route exit via background
-            try { chrome.runtime.sendMessage({ type: 'EXIT_PIP' }); } catch (_) { }
-            return;
-        }
-        window.__pipExt = window.__pipExt || { isSelector: false, isTriggered: false };
-        window.__pipExt.isTriggered = true;
-        document.dispatchEvent(new CustomEvent('Instagram_Control_Event', { detail: { action: 'REQUEST_PIP' } }));
-    }
+    const togglePiP = window.PiPUtils.createTogglePiP('Instagram_Control_Event');
 
     // Listen for Commands from Panel (Global) -> Relay
     if (window.PiPUtils && window.PiPUtils.setupMessageRelay) {

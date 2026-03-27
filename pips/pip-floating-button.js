@@ -8,7 +8,12 @@
     // ---- Shared helpers ----
 
     /** Fire-and-forget chrome.runtime message — safe against context invalidation. */
-    const _send = (type) => { try { chrome.runtime.sendMessage({ type }); } catch (e) { log.trace('msg failed:', type, e.message); } };
+    const _send = (type) => { 
+        if (window.PiPUtils?.safeSendMessage) {
+            const { MSG } = window.PIP_CONSTANTS || {};
+            window.PiPUtils.safeSendMessage({ type: MSG?.[type] || type });
+        }
+    };
 
     window.PiPFloatingButton = {
         _managedButtons: new Set(),
@@ -86,10 +91,11 @@
             this._syncInitialized = true;
 
             const _onMsg = (msg) => {
-                if (msg.type === 'PIP_ACTIVATED' || msg.type === 'PIP_SESSION_STARTED') {
+                const { MSG } = window.PIP_CONSTANTS || {};
+                if (msg.type === MSG?.PIP_ACTIVATED || msg.type === MSG?.PIP_SESSION_STARTED) {
                     this._isPipActiveGlobal = true;
                     this._refreshManagedIcons(true);
-                } else if (msg.type === 'HIDE_VOLUME_PANEL' || msg.type === 'PIP_DEACTIVATED') {
+                } else if (msg.type === MSG?.HIDE_VOLUME_PANEL || msg.type === MSG?.PIP_DEACTIVATED) {
                     this._isPipActiveGlobal = false;
                     this._refreshManagedIcons(false);
                 }
@@ -99,7 +105,8 @@
 
             // Initial sync
             if (window.PiPUtils?.safeSendMessage) {
-                window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
+                const { MSG } = window.PIP_CONSTANTS || {};
+                window.PiPUtils.safeSendMessage({ type: MSG?.GET_PIP_STATE || 'GET_PIP_STATE' }, (res) => {
                     if (res?.state?.active) {
                         this._isPipActiveGlobal = true;
                         this._refreshManagedIcons(true);
@@ -110,7 +117,8 @@
             // Visibility sync (compensate for lazy background)
             document.addEventListener('visibilitychange', () => {
                 if (document.visibilityState === 'visible' && window.PiPUtils?.safeSendMessage) {
-                    window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
+                    const { MSG } = window.PIP_CONSTANTS || {};
+                    window.PiPUtils.safeSendMessage({ type: MSG?.GET_PIP_STATE || 'GET_PIP_STATE' }, (res) => {
                         this._isPipActiveGlobal = !!res?.state?.active;
                         this._refreshManagedIcons(this._isPipActiveGlobal);
                     });

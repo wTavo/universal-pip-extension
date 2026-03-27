@@ -268,13 +268,23 @@
     };
 
     const _onRuntimeMessage = (message, sender, sendResponse) => {
+        const { MSG } = window.PIP_CONSTANTS;
         if (Handlers[message.type]) {
             Handlers[message.type](message, sendResponse);
         } else {
             // Background-only messages or unknown
-            const ignored = ["TOGGLE_MUTE_VIDEO", "LIKE_VIDEO", "FAVORITE_VIDEO", "NAVIGATE_VIDEO", "CHANGE_VOLUME", "SEEK_VIDEO", "VALIDATE_PIP_STATUS", "PIP_SESSION_STARTED", "SHOW_GLOBAL_PIP_BTN", "EXIT_PIP", "START_SELECTION_MODE", "SYNC_PIP_STATE", "STOP_SELECTION_MODE", "VISIBILITY_PING"];
-            if (ignored.includes(message.type)) sendResponse({ success: true });
-            else sendResponse({ ignored: true });
+            const ignored = [
+                MSG.TOGGLE_MUTE_VIDEO, MSG.LIKE_VIDEO, MSG.FAVORITE_VIDEO, 
+                MSG.NAVIGATE_VIDEO, MSG.CHANGE_VOLUME, MSG.SEEK_VIDEO, 
+                MSG.VALIDATE_PIP_STATUS, MSG.PIP_SESSION_STARTED, 
+                MSG.SHOW_GLOBAL_PIP_BTN, MSG.EXIT_PIP, MSG.START_SELECTION_MODE, 
+                MSG.SYNC_PIP_STATE, MSG.STOP_SELECTION_MODE, MSG.VISIBILITY_PING
+            ];
+            if (ignored.includes(message.type)) {
+                sendResponse({ success: true });
+            } else {
+                sendResponse({ ignored: true });
+            }
         }
     };
 
@@ -880,7 +890,6 @@
         // Ensure UI is updated correctly after restoration
         if (state.active) {
             showToggleButton(state);
-            syncUI(state);
         } else {
             destroyUI();
         }

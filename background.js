@@ -1,98 +1,15 @@
 // Service Worker para manejar el estado global del PiP
 
-// Single source of truth for default state shape
-const DEFAULT_PIP_STATE = Object.freeze({
-    active: false,
-    tabId: null,
-    volume: 100,
-    muted: false,
-    liked: false,
-    favorited: false,
-    uiVisible: true,
-    navExpanded: true,
-    isSelectorMode: false,
-    isShorts: false,
-    platform: null,
-    playing: false,
-    isLive: false,
-    isTikTokLive: false,
-    hasFavorite: true,
-    originDomain: null,
-    isExtensionTriggered: false,
-    domainExceptions: {}
-});
+// ========================================
+// Logging & Debugging Configuration
+// ========================================
 
-// Centralized Message Types
-const MSG = {
-    // UI Visibility
-    GET_UI_STATE: 'GET_UI_STATE',
-    EXECUTE_COMMAND: 'EXECUTE_COMMAND',
-    HIDE_EXTENSION_UI: 'HIDE_EXTENSION_UI',
-    SHOW_EXTENSION_UI: 'SHOW_EXTENSION_UI',
-    SYNC_SESSION_VISIBILITY: 'SYNC_SESSION_VISIBILITY',
-    GET_UI_VISIBILITY: 'GET_UI_VISIBILITY',
+importScripts('utils/constants.js');
+importScripts('utils/logger.js');
+const log = PiPLogger.create('BG');
 
-    // PiP Lifecycle
-    PIP_ACTIVATED: 'PIP_ACTIVATED',
-    PIP_DEACTIVATED: 'PIP_DEACTIVATED',
-    PIP_SESSION_STARTED: 'PIP_SESSION_STARTED',
-    VALIDATE_PIP_STATUS: 'VALIDATE_PIP_STATUS',
-    SIGNAL_NAVIGATION: 'SIGNAL_NAVIGATION',
-    REQUEST_EARLY_PANEL: 'REQUEST_EARLY_PANEL',
-    REQUEST_PIP_STATE: 'REQUEST_PIP_STATE',
-    GET_PIP_STATE: 'GET_PIP_STATE',
-    CHECK_PIP_STATUS: 'CHECK_PIP_STATUS',
-    EXIT_PIP: 'EXIT_PIP',
-    VISIBILITY_PING: 'VISIBILITY_PING',
-    PANEL_PING: 'PANEL_PING',
-
-    // Controls
-    TOGGLE_PLAY: 'TOGGLE_PLAY',
-    TOGGLE_MUTE: 'TOGGLE_MUTE',
-    TOGGLE_MUTE_VIDEO: 'TOGGLE_MUTE_VIDEO',
-    TOGGLE_LIKE: 'TOGGLE_LIKE',
-    TOGGLE_FAVORITE: 'TOGGLE_FAVORITE',
-    SEEK_VIDEO: 'SEEK_VIDEO',
-    NAVIGATE_VIDEO: 'NAVIGATE_VIDEO',
-    SET_VOLUME: 'SET_VOLUME',
-    SET_VOLUME_LIVE: 'SET_VOLUME_LIVE',
-    CHANGE_VOLUME: 'CHANGE_VOLUME',
-    PAUSE_VIDEO: 'PAUSE_VIDEO',
-    FOCUS_PIP: 'FOCUS_PIP',
-
-    // Relay-compatible aliases for content scripts
-    LIKE_VIDEO: 'LIKE_VIDEO',
-    FAVORITE_VIDEO: 'FAVORITE_VIDEO',
-
-    // State Sync
-    UPDATE_FAVORITE_STATE: 'UPDATE_FAVORITE_STATE',
-    UPDATE_LIKE_STATE: 'UPDATE_LIKE_STATE',
-    UPDATE_PLAYBACK_STATE: 'UPDATE_PLAYBACK_STATE',
-    UPDATE_TIKTOK_LIVE_STATE: 'UPDATE_TIKTOK_LIVE_STATE',
-    UPDATE_VOLUME_STATE: 'UPDATE_VOLUME_STATE',
-    SET_NAV_EXPANDED: 'SET_NAV_EXPANDED',
-    SYNC_NAV_EXPANDED: 'SYNC_NAV_EXPANDED',
-    SYNC_VOLUME_UI: 'SYNC_VOLUME_UI',
-    SYNC_LIKE_UI: 'SYNC_LIKE_UI',
-    SYNC_FAVORITE_UI: 'SYNC_FAVORITE_UI',
-    SYNC_PLAYBACK_UI: 'SYNC_PLAYBACK_UI',
-    SYNC_TIKTOK_LIVE_UI: 'SYNC_TIKTOK_LIVE_UI',
-    UPDATE_MUTE_STATE: 'UPDATE_MUTE_STATE',
-    SYNC_PIP_STATE: 'SYNC_PIP_STATE',
-
-    // Drag/Position
-    SYNC_DRAG_POSITION: 'SYNC_DRAG_POSITION',
-    GET_DRAG_POSITION: 'GET_DRAG_POSITION',
-
-    // Misc
-    PING: 'PING',
-    START_SELECTION_MODE: 'START_SELECTION_MODE',
-    STOP_SELECTION_MODE: 'STOP_SELECTION_MODE',
-    ACTIVATE_SELECTION_MODE: 'ACTIVATE_SELECTION_MODE',
-    STOP_SELECTION_MODE_GLOBAL: 'STOP_SELECTION_MODE_GLOBAL',
-    HIDE_VOLUME_PANEL: 'HIDE_VOLUME_PANEL',
-    SHOW_VOLUME_PANEL: 'SHOW_VOLUME_PANEL'
-};
+// Note: DEFAULT_PIP_STATE and MSG are already available globally 
+// in this worker from importScripts('utils/constants.js').
 
 // Estado en memoria (caché)
 let pipState = { ...DEFAULT_PIP_STATE };
@@ -104,8 +21,7 @@ let _saveLock = Promise.resolve();
 // Logging & Debugging Configuration
 // ========================================
 
-importScripts('utils/logger.js');
-const log = PiPLogger.create('BG');
+// Handled by importScripts above
 
 // Track last sent panel shows to prevent spam/redundancy
 const lastPanelShow = new Map(); // tabId -> timestamp
@@ -449,6 +365,7 @@ async function handleExitPip(message, sender, sendResponse) {
             safeSendMessage(pipState.tabId, { type: 'PAUSE_VIDEO' });
         }
         await safeSendMessage(pipState.tabId, { type: MSG.EXIT_PIP });
+        await performPipGlobalCleanup();
     } else {
         log.warn('No target tab ID for EXIT_PIP');
     }
@@ -456,9 +373,7 @@ async function handleExitPip(message, sender, sendResponse) {
     if (sendResponse) sendResponse({ success: true });
 }
 
-// Injection failure tracking removed (Manifest v3 handles content script lifecycle automatically)
-
-// Inyectar el script de control en una pestaña específica
+// (Injection failure tracking handles content script lifecycle automatically)
 // Inyectar el script de control en una pestaña específica (Simplificado para Manifest)
 async function injectControlPanel(tabId, tabUrl) {
     try {
@@ -482,19 +397,13 @@ async function injectControlPanel(tabId, tabUrl) {
     }
 }
 
-// ensureVisibilityListener REMOVED - Handled by manifest.json
-
-// Proactive initialization NOT needed for content scripts in manifest.
-// The browser handles it for us on load.
-// Manifest v3 handles content script lifecycle automatically.
-// The browser handles it for us on load.
+// (Proactive initialization NOT needed for content scripts in manifest)
 
 chrome.runtime.onInstalled.addListener((details) => {
     log.info('Extension installed/updated:', details.reason);
 });
 
-// chrome.runtime.onStartup REMOVED - Manifest content scripts handle injection automatically.
-// Only onInstalled is needed for updates/installs while browser is open.
+// (onStartup REMOVED - Manifest content scripts handle injection automatically)
 
 
 
@@ -638,23 +547,7 @@ async function syncToRelevantTabs(message, options = {}) {
     }
 }
 
-// Async Message Handlers (from second listener)
-// ========================================
-
-async function handleExitPip(message, sender, sendResponse) {
-    if (pipState.active && pipState.tabId) {
-        log.info('Executing manual exit for tab:', pipState.tabId);
-        const oldTabId = pipState.tabId;
-
-        // 1. Send exit command directly to origin tab (bridge handles the actual video exit)
-        await safeSendMessage(oldTabId, { type: MSG.EXIT_PIP });
-
-        // 2. Perform global cleanup
-        await performPipGlobalCleanup();
-    }
-
-    if (sendResponse) sendResponse({ success: true });
-}
+// (Redundant handleExitPip removed)
 
 async function handlePipActivated(message, sender, sendResponse) {
     const oldTabId = pipState.tabId;

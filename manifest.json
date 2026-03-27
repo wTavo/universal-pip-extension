@@ -60,6 +60,7 @@
         "<all_urls>"
       ],
       "js": [
+        "utils/constants.js",
         "utils/logger.js",
         "utils/pip-utils.js",
         "ui-visibility-listener.js",
@@ -74,6 +75,7 @@
         "<all_urls>"
       ],
       "js": [
+        "utils/constants.js",
         "utils/pip-utils.js",
         "volume-panel/volume-panel-ui.js",
         "volume-panel/volume-panel-layout.js",
