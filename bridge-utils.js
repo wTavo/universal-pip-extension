@@ -652,15 +652,120 @@
                 isLive: opts.detectIsLive ? opts.detectIsLive(targetVideo) : false
             };
 
-            if (lastState && Object.keys(state).every(k => state[k] === lastState[k])) return;
+            if (!forceBroadcast && lastState && Object.keys(state).every(k => state[k] === lastState[k])) return;
 
             lastState = state;
             opts.onStateChange(state);
         };
     }
 
+    /**
+     * Generic seeking handler.
+     */
+    function handleSeek(video, delta) {
+        if (!video || !Number.isFinite(delta)) return;
+        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + delta));
+    }
+
+    /**
+     * BaseBridge factory to create a unified platform bridge.
+     * Encapsulates standard event listeners and message handling.
+     */
+    function createBaseBridge(options) {
+        const {
+            platform,
+            getVideo,
+            onStateChange,
+            getLikeStatus,
+            getFavoriteStatus,
+            detectIsLive,
+            findMuteBtn = () => null,
+            getPlayer = () => null,
+            supportedActions = {}
+        } = options;
+
+        const monitorState = createMonitorState({
+            getLikeStatus,
+            getFavoriteStatus,
+            detectIsLive,
+            onStateChange
+        });
+
+        const eventMap = {
+            'play': monitorState,
+            'playing': monitorState,
+            'pause': monitorState,
+            'volumechange': monitorState,
+            'ratechange': monitorState,
+            'seeked': monitorState,
+            'enterpictureinpicture': () => monitorState(null, true),
+            'leavepictureinpicture': () => monitorState(null, true)
+        };
+
+        return {
+            monitorState,
+            
+            addVideoStateListeners: (video) => {
+                if (!video) return;
+                for (const [evt, handler] of Object.entries(eventMap)) {
+                    video.addEventListener(evt, handler);
+                }
+            },
+
+            removeVideoStateListeners: (video) => {
+                if (!video) return;
+                for (const [evt, handler] of Object.entries(eventMap)) {
+                    video.removeEventListener(evt, handler);
+                }
+            },
+
+            // Standard message dispatcher for the bridge
+            handleMessage: (msg) => {
+                const video = getVideo();
+                if (!video) return null;
+
+                // 1. Check if it's a platform-specific action (OR an override)
+                if (supportedActions[msg.action]) {
+                    const result = supportedActions[msg.action](video, msg);
+                    if (result?.handled) return result;
+                }
+
+                // 2. Fall back to standard logic
+                switch (msg.action) {
+                    case ACTIONS.SET_VOLUME:
+                        handleSetVolume(video, msg.value, (v, vol) => {
+                            const p = getPlayer(v);
+                            if (typeof p?.setVolume === 'function') p.setVolume(vol); else v.volume = vol / 100;
+                        }, (v, muted) => handleMuteUnmute(v, muted, findMuteBtn, getPlayer(v)));
+                        return { handled: true };
+                    case ACTIONS.MUTE:
+                        handleMuteUnmute(video, true, findMuteBtn, getPlayer(video));
+                        return { handled: true };
+                    case ACTIONS.UNMUTE:
+                        handleMuteUnmute(video, false, findMuteBtn, getPlayer(video));
+                        return { handled: true };
+                    case ACTIONS.TOGGLE_PLAY:
+                        if (video.paused) video.play().catch(() => {}); else video.pause();
+                        return { handled: true };
+                    case ACTIONS.SEEK:
+                        handleSeek(video, msg.delta);
+                        return { handled: true };
+                    case ACTIONS.REQUEST_PIP:
+                        handleRequestPip({ getVideo });
+                        return { handled: true };
+                    case ACTIONS.FOCUS_PIP:
+                        handleFocusPip();
+                        return { handled: true };
+                    default:
+                        return null;
+                }
+            }
+        };
+    }
+
     window.BridgeUtils = {
         ACTIONS,
+        createBaseBridge,
         getActiveVideo: getActiveVideoFast,
         getClosestCandidate,
         enableAutoSwitching,

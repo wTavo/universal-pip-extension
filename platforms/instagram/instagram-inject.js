@@ -35,6 +35,28 @@
     }
 
 
+    // --- Core Functionality Updated ---
+    const togglePiP = window.PiPUtils.createTogglePiP('Instagram_Control_Event');
+
+    // Listen for Commands from Panel (Global) -> Relay
+    if (window.PiPUtils && window.PiPUtils.setupMessageRelay) {
+        window.PiPUtils.setupMessageRelay('Instagram_Control_Event', {
+            'CHANGE_VOLUME': (msg) => ({ action: 'SET_VOLUME', value: msg.volume }),
+            'TOGGLE_MUTE_VIDEO': (msg) => ({ action: msg.muted ? 'MUTE' : 'UNMUTE' }),
+            'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
+            'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
+            'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
+            'NAVIGATE_VIDEO': (msg) => {
+                window.__pipIgnoreNextPopstate = true;
+                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
+                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
+            },
+            'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
+            'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
+            'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' })
+        });
+    }
+
     // --- PiP Button & Selector Ball (via universal manager) ---
     window.PiPFloatingButton?.init({
         id: 'instagramPipBtn',
@@ -79,27 +101,7 @@
         }
     });
 
-    // --- Core Functionality Updated ---
-    const togglePiP = window.PiPUtils.createTogglePiP('Instagram_Control_Event');
 
-    // Listen for Commands from Panel (Global) -> Relay
-    if (window.PiPUtils && window.PiPUtils.setupMessageRelay) {
-        window.PiPUtils.setupMessageRelay('Instagram_Control_Event', {
-            'CHANGE_VOLUME': (msg) => ({ action: 'SET_VOLUME', value: msg.volume }),
-            'TOGGLE_MUTE_VIDEO': (msg) => ({ action: msg.muted ? 'MUTE' : 'UNMUTE' }),
-            'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
-            'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
-            'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
-            'NAVIGATE_VIDEO': (msg) => {
-                window.__pipIgnoreNextPopstate = true;
-                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
-                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
-            },
-            'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
-            'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
-            'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' })
-        });
-    }
 
 
 })();

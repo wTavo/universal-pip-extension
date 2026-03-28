@@ -189,7 +189,7 @@
                 }, 1000);
 
                 // Notificar al background que el PiP está activo
-                chrome.runtime.sendMessage({
+                window.PiPUtils?.safeSendMessage({
                     type: 'PIP_ACTIVATED',
                     muted: video.muted,
                     playing: !video.paused,
@@ -216,13 +216,13 @@
             }
         }
 
-        chrome.runtime.sendMessage({ type: 'PIP_DEACTIVATED' });
+        window.PiPUtils?.safeSendMessage({ type: 'PIP_DEACTIVATED' });
     }
 
     // Detectar cuando se sale del PiP
     document.addEventListener('leavepictureinpicture', () => {
         // Handled globally
-        chrome.runtime.sendMessage({
+        window.PiPUtils?.safeSendMessage({
             type: 'PIP_DEACTIVATED'
         });
     });
@@ -320,7 +320,7 @@
                                 currentVideo = visibleVideo;
 
                                 // Actualizar volumen en el background
-                                chrome.runtime.sendMessage({
+                                window.PiPUtils?.safeSendMessage({
                                     type: 'SET_VOLUME',
                                     volume: Math.round(visibleVideo.volume * 100)
                                 });
@@ -444,11 +444,11 @@
         if (!video) return;
 
         // Update initial state
-        chrome.runtime.sendMessage({
+        window.PiPUtils?.safeSendMessage({
             type: 'UPDATE_VOLUME_STATE',
             volume: Math.round(video.volume * 100),
             muted: video.muted
-        }).catch(() => { });
+        });
 
         // Remove existing listener if any (to avoid duplicates)
         video.removeEventListener('volumechange', handleVolumeChange);
@@ -457,11 +457,11 @@
 
     function handleVolumeChange(e) {
         const video = e.target;
-        chrome.runtime.sendMessage({
+        window.PiPUtils?.safeSendMessage({
             type: 'UPDATE_VOLUME_STATE',
             volume: Math.round(video.volume * 100),
             muted: video.muted
-        }).catch(() => { });
+        });
     }
 
 })();

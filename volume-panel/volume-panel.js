@@ -76,9 +76,9 @@
                 window.PiPUtils.safeSendMessage(msg, cb);
             } else {
                 try {
-                    const runtime = (window.chrome && chrome.runtime) ? chrome.runtime : (window.browser && browser.runtime ? browser.runtime : null);
-                    if (runtime && runtime.sendMessage) {
-                        runtime.sendMessage(msg, (res) => { if (typeof cb === 'function') cb(res); });
+                    const runtime = (typeof chrome !== 'undefined' && chrome.runtime) ? chrome.runtime : (typeof browser !== 'undefined' && browser.runtime ? browser.runtime : null);
+                    if (runtime && runtime.id && runtime.sendMessage) {
+                        runtime.sendMessage(msg, (res) => { if (typeof cb === 'function') cb(res) });
                     } else if (typeof cb === 'function') {
                         cb();
                     }

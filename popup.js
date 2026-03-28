@@ -257,6 +257,7 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             try {
+                if (!chrome.runtime?.id) return;
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
                 const { MSG } = window.PIP_CONSTANTS;

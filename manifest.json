@@ -62,6 +62,7 @@
       "js": [
         "utils/constants.js",
         "utils/logger.js",
+        "utils/ui-constants.js",
         "utils/pip-utils.js",
         "ui-visibility-listener.js",
         "pips/pip-floating-button.js",
@@ -76,6 +77,7 @@
       ],
       "js": [
         "utils/constants.js",
+        "utils/ui-constants.js",
         "utils/pip-utils.js",
         "volume-panel/volume-panel-ui.js",
         "volume-panel/volume-panel-layout.js",

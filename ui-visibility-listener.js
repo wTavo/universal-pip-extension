@@ -147,9 +147,9 @@
     if (_runtime) _runtime.onMessage.addListener(onRuntimeMessage);
 
     // Initial state check
-    if (_runtime) {
-        const { MSG } = window.PIP_CONSTANTS;
-        _runtime.sendMessage({ type: MSG.GET_PIP_STATE }, (res) => {
+    const { MSG } = window.PIP_CONSTANTS;
+    if (window.PiPUtils?.safeSendMessage) {
+        window.PiPUtils.safeSendMessage({ type: MSG.GET_PIP_STATE }, (res) => {
             const visibleState = (res && res.effectiveUiVisible !== undefined) ? res.effectiveUiVisible : (res && res.state && res.state.uiVisible !== undefined ? res.state.uiVisible : true);
 
             if (res && res.state) {
@@ -159,17 +159,12 @@
             }
 
             if (res && res.state && res.state.active) {
-                _runtime.sendMessage({ type: MSG.REQUEST_EARLY_PANEL });
+                window.PiPUtils.safeSendMessage({ type: MSG.REQUEST_EARLY_PANEL });
             }
         });
     }
 
-    // BFCache restoration
-    window.addEventListener('pageshow', (event) => {
-        if (!event.persisted || !_runtime) return;
-        const { MSG } = window.PIP_CONSTANTS;
-        _runtime.sendMessage({ type: MSG.REQUEST_EARLY_PANEL });
-    });
+    // BFCache restoration is now handled centrally in pip-utils.js
 
     // MutationObserver to catch elements added dynamically or attributes modified surgically
     // This avoids O(N) full-DOM scans on every change (critical for large sites like TikTok/YouTube)

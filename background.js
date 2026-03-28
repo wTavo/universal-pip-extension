@@ -248,24 +248,35 @@ function canReceivePipMessages(tab) {
 // Generic State Helpers
 // ========================================
 
-async function handleStateToggle(field, syncType, relayType, message, sender, sendResponse) {
-    const newVal = message[field] !== undefined ? !!message[field] : !pipState[field];
-    log.info(`Toggle ${field}:`, newVal);
-    await updateAndSync(
-        { [field]: newVal },
-        { type: syncType, [field]: newVal },
-        relayType,
-        { [field]: newVal }
-    );
-    if (sendResponse) sendResponse({ success: true, [field]: newVal });
-}
-
-async function handleStateUpdate(field, syncType, message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        const val = message[field];
-        await updateAndSync({ [field]: val }, { type: syncType, [field]: val });
+/**
+ * Unified helper for toggling or setting a state field and broadcasting the change.
+ */
+async function handleStateAction(field, syncType, relayType, message, sender, sendResponse) {
+    let newVal;
+    if (message.value !== undefined) {
+        newVal = message.value;
+    } else if (message[field] !== undefined) {
+        newVal = message[field];
+    } else {
+        newVal = !pipState[field];
     }
-    if (sendResponse) sendResponse({ success: true });
+
+    log.info(`State Action [${field}]:`, newVal);
+    
+    const delta = { [field]: newVal };
+    // Special logic for volume/mute cross-dependency
+    if (field === 'volume' && newVal > 0 && pipState.muted) {
+        delta.muted = false;
+    }
+
+    const result = await updateAndSync(
+        delta,
+        { type: syncType, ...delta },
+        relayType,
+        delta
+    );
+
+    if (sendResponse) sendResponse({ success: true, ...delta });
 }
 
 async function validateTabPipStatus(tabId, url) {
@@ -626,76 +637,8 @@ async function handleNavigateVideo(message, sender, sendResponse) {
     sendResponse({ success: true });
 }
 
-// Note: specific handlers for Liked, Favorited, and Playback are now handled 
-// via handleStateToggle and handleStateUpdate in the dispatcher.
-
-async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        const updates = {};
-        if (typeof message.isTikTokLive === 'boolean') updates.isTikTokLive = message.isTikTokLive;
-        if (typeof message.hasFavorite === 'boolean') updates.hasFavorite = message.hasFavorite;
-
-        // Ensure we send the NEW values in the sync message
-        await updateAndSync(updates, {
-            type: MSG.SYNC_TIKTOK_LIVE_UI,
-            isTikTokLive: updates.isTikTokLive !== undefined ? updates.isTikTokLive : pipState.isTikTokLive,
-            hasFavorite: updates.hasFavorite !== undefined ? updates.hasFavorite : pipState.hasFavorite
-        });
-    }
-    sendResponse({ success: true });
-}
-
-async function handlePipDeactivated(message, sender, sendResponse) {
-    if (pipState.active) {
-        const actingTabId = sender.tab?.id;
-
-        if (!message.force && actingTabId && actingTabId === _navigationGraceTabId) {
-            log.info('Ignoring PiP deactivation during navigation grace period for tab:', actingTabId);
-            sendResponse({ success: true });
-            return;
-        }
-
-        log.info('PiP deactivated by event from tab:', actingTabId);
-        await performPipGlobalCleanup();
-    }
-    sendResponse({ success: true });
-}
-
-async function handleSetVolume(message, sender, sendResponse) {
-    _volumeDragActive = false;
-    const newVolume = Math.max(0, Math.min(100, message.volume));
-    log.info('Set volume:', newVolume);
-
-    const stateUpdate = { volume: newVolume };
-    if (newVolume > 0 && pipState.muted) {
-        stateUpdate.muted = false;
-    }
-
-    const result = await updateAndSync(
-        stateUpdate,
-        { type: MSG.SYNC_VOLUME_UI, volume: newVolume, muted: stateUpdate.muted !== undefined ? stateUpdate.muted : pipState.muted },
-        MSG.CHANGE_VOLUME,
-        { volume: newVolume }
-    );
-
-    if (result.state.muted === false) {
-        await syncToRelevantTabs({ type: MSG.UPDATE_MUTE_STATE, muted: false });
-    }
-
-    sendResponse({ success: true });
-}
-
-async function handleToggleMute(message, sender, sendResponse) {
-    const newMuted = message.muted !== undefined ? !!message.muted : !pipState.muted;
-    log.info('Toggle mute:', newMuted);
-    await updateAndSync(
-        { muted: newMuted },
-        { type: MSG.UPDATE_MUTE_STATE, muted: newMuted },
-        MSG.TOGGLE_MUTE_VIDEO,
-        { muted: newMuted }
-    );
-    sendResponse({ success: true, muted: newMuted });
-}
+// specific handlers for Liked, Favorited, and Playback are now handled 
+// via handleStateAction in the dispatcher.
 
 async function handleSeekVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
@@ -708,21 +651,11 @@ async function handleSeekVideo(message, sender, sendResponse) {
 }
 
 async function handleUpdateVolumeState(message, sender, sendResponse) {
-    if (sender.tab && sender.tab.id === pipState.tabId) {
-        if (_volumeDragActive) {
-            sendResponse({ success: true });
-            return;
-        }
-
+    if (sender.tab && sender.tab.id === pipState.tabId && !_volumeDragActive) {
         const newState = {};
         if (message.volume !== undefined) newState.volume = message.volume;
         if (message.muted !== undefined) newState.muted = message.muted;
-
-        await updateAndSync(newState, {
-            type: MSG.SYNC_VOLUME_UI,
-            volume: message.volume,
-            muted: message.muted
-        });
+        await updateAndSync(newState, { type: MSG.SYNC_VOLUME_UI, ...newState });
     }
     sendResponse({ success: true });
 }
@@ -757,6 +690,28 @@ function handlePing(message, sender, sendResponse) {
     return false;
 }
 
+async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
+    if (sender.tab && sender.tab.id === pipState.tabId) {
+        const updates = {};
+        if (typeof message.isTikTokLive === 'boolean') updates.isTikTokLive = message.isTikTokLive;
+        if (typeof message.hasFavorite === 'boolean') updates.hasFavorite = message.hasFavorite;
+        await updateAndSync(updates, { type: MSG.SYNC_TIKTOK_LIVE_UI, ...updates });
+    }
+    sendResponse({ success: true });
+}
+
+async function handlePipDeactivated(message, sender, sendResponse) {
+    if (pipState.active) {
+        const actingTabId = sender.tab?.id;
+        if (!message.force && actingTabId && actingTabId === _navigationGraceTabId) {
+            log.info('Ignoring PiP deactivation during grace period for tab:', actingTabId);
+            return sendResponse({ success: true });
+        }
+        log.info('PiP deactivated by event from tab:', actingTabId);
+        await performPipGlobalCleanup();
+    }
+    sendResponse({ success: true });
+}
 // ========================================
 // Consolidated Message Dispatcher
 // ========================================
@@ -768,71 +723,57 @@ const COMMAND_HANDLERS = {
     [MSG.PIP_ACTIVATED]: handlePipActivated,
     [MSG.PIP_DEACTIVATED]: handlePipDeactivated,
     [MSG.STOP_SELECTION_MODE_GLOBAL]: handleStopSelectionModeGlobal,
-    [MSG.EXIT_PIP]: async (message, sender, sendResponse) => {
-        await handleExitPip(message, sender, sendResponse);
-    },
+    [MSG.EXIT_PIP]: handleExitPip,
     [MSG.NAVIGATE_VIDEO]: handleNavigateVideo,
-    [MSG.TOGGLE_LIKE]: (m, s, r) => handleStateToggle('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
-    [MSG.LIKE_VIDEO]: (m, s, r) => handleStateToggle('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
-    [MSG.TOGGLE_FAVORITE]: (m, s, r) => handleStateToggle('favorited', MSG.SYNC_FAVORITE_UI, MSG.FAVORITE_VIDEO, m, s, r),
-    [MSG.FAVORITE_VIDEO]: (m, s, r) => handleStateToggle('favorited', MSG.SYNC_FAVORITE_UI, MSG.FAVORITE_VIDEO, m, s, r),
-    [MSG.UPDATE_FAVORITE_STATE]: (m, s, r) => handleStateUpdate('favorited', MSG.SYNC_FAVORITE_UI, m, s, r),
-    [MSG.UPDATE_LIKE_STATE]: (m, s, r) => handleStateUpdate('liked', MSG.SYNC_LIKE_UI, m, s, r),
-    [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateUpdate('playing', MSG.SYNC_PLAYBACK_UI, m, s, r),
-    [MSG.UPDATE_TIKTOK_LIVE_STATE]: handleUpdateTikTokLiveState,
-    [MSG.SET_VOLUME]: handleSetVolume,
-    [MSG.CHANGE_VOLUME]: handleSetVolume, // Relay-compatible alias
+    
+    // Generic State Actions
+    [MSG.TOGGLE_LIKE]: (m, s, r) => handleStateAction('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
+    [MSG.UPDATE_LIKE_STATE]: (m, s, r) => handleStateAction('liked', MSG.SYNC_LIKE_UI, null, m, s, r),
+    
+    [MSG.TOGGLE_FAVORITE]: (m, s, r) => handleStateAction('favorited', MSG.SYNC_FAVORITE_UI, MSG.FAVORITE_VIDEO, m, s, r),
+    [MSG.UPDATE_FAVORITE_STATE]: (m, s, r) => handleStateAction('favorited', MSG.SYNC_FAVORITE_UI, null, m, s, r),
+    
+    [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
+    [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, null, m, s, r),
+    
+    [MSG.TOGGLE_MUTE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
+    [MSG.TOGGLE_MUTE_VIDEO]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
+    [MSG.CHANGE_MUTE_STATE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, null, m, s, r),
+
+    [MSG.SET_VOLUME]: (m, s, r) => handleStateAction('volume', MSG.SYNC_VOLUME_UI, MSG.CHANGE_VOLUME, m, s, r),
+    [MSG.CHANGE_VOLUME]: (m, s, r) => handleStateAction('volume', MSG.SYNC_VOLUME_UI, MSG.CHANGE_VOLUME, m, s, r),
     [MSG.SET_VOLUME_LIVE]: (message, sender, sendResponse) => {
-        // Lightweight real-time relay during slider drag
         _volumeDragActive = true;
-        if (pipState.tabId) {
-            safeSendMessage(pipState.tabId, { type: MSG.CHANGE_VOLUME, volume: message.volume });
-        }
+        if (pipState.tabId) safeSendMessage(pipState.tabId, { type: MSG.CHANGE_VOLUME, volume: message.volume });
         pipState.volume = message.volume;
         if (message.volume > 0 && pipState.muted) pipState.muted = false;
-        sendResponse({ success: true });
+        if (sendResponse) sendResponse({ success: true });
     },
-    [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateToggle('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
-    [MSG.TOGGLE_MUTE]: handleToggleMute,
-    [MSG.TOGGLE_MUTE_VIDEO]: handleToggleMute, // Relay-compatible alias
-    [MSG.SEEK_VIDEO]: handleSeekVideo,
     [MSG.UPDATE_VOLUME_STATE]: handleUpdateVolumeState,
+
+    [MSG.UPDATE_TIKTOK_LIVE_STATE]: handleUpdateTikTokLiveState,
+    [MSG.SEEK_VIDEO]: handleSeekVideo,
     [MSG.SET_NAV_EXPANDED]: handleSetNavExpanded,
     [MSG.REQUEST_PIP_STATE]: handleRequestPipState,
     [MSG.GET_PIP_STATE]: handleRequestPipState,
-    [MSG.REQUEST_EARLY_PANEL]: async (message, sender, sendResponse) => {
-        try {
-            const state = await getPipState();
-            const senderTabId = sender.tab?.id;
-            if (!state.active) {
-                if (senderTabId) safeSendMessage(senderTabId, { type: MSG.HIDE_VOLUME_PANEL });
-                sendResponse({ skipped: true });
-                return;
-            }
-            if (!senderTabId || senderTabId === state.tabId) {
-                sendResponse({ skipped: true });
-                return;
-            }
-            const tab = sender.tab;
-            if (!tab.url || !canReceivePipMessages(tab)) {
-                sendResponse({ skipped: true });
-                return;
-            }
-            const success = await injectControlPanel(senderTabId, tab.url);
-            if (success) {
-                lastPanelShow.delete(senderTabId);
-                showControlPanel(senderTabId);
-            }
-            sendResponse({ success });
-        } catch (e) {
-            sendResponse({ skipped: true });
-        }
-    },
     [MSG.CHECK_PIP_STATUS]: handleRequestPipState,
     [MSG.SIGNAL_NAVIGATION]: handleSignalNavigation,
     [MSG.SYNC_DRAG_POSITION]: handleSyncDragPosition,
     [MSG.GET_DRAG_POSITION]: handleGetDragPosition,
-    [MSG.PING]: handlePing
+    [MSG.PING]: handlePing,
+    
+    [MSG.REQUEST_EARLY_PANEL]: async (message, sender, sendResponse) => {
+        const state = await getPipState();
+        const tabId = sender.tab?.id;
+        if (!state.active || !tabId || tabId === state.tabId || !canReceivePipMessages(sender.tab)) {
+            return sendResponse({ skipped: true });
+        }
+        if (await injectControlPanel(tabId, sender.tab.url)) {
+            lastPanelShow.delete(tabId);
+            showControlPanel(tabId);
+            sendResponse({ success: true });
+        } else sendResponse({ skipped: true });
+    }
 };
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -841,8 +782,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const handler = COMMAND_HANDLERS[message.type];
     if (handler) {
         const result = handler(message, sender, sendResponse);
-        // If handler returns exactly true, we tell Chrome to keep the channel open.
-        // If it's a Promise (from an async function), we should also return true.
         if (result === true || (result && typeof result.then === 'function')) {
             return true;
         }

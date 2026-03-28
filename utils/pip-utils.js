@@ -233,7 +233,15 @@
             btn.id = id;
             if (title) btn.title = title;
             btn.setAttribute(CONSTANTS.PIP_UI_ATTR, 'true');
-            btn.innerHTML = text || "";
+            
+            if (options.icon && window.PIP_UI_ICONS && window.PIP_SVG_UTILS) {
+                const iconDef = window.PIP_UI_ICONS[options.icon];
+                if (iconDef) {
+                    btn.appendChild(window.PIP_SVG_UTILS.createSVG(iconDef));
+                }
+            } else {
+                btn.innerHTML = text || "";
+            }
 
             const defaultStyles = {
                 position: 'fixed',
@@ -276,9 +284,7 @@
                         const pos = { topPercent, leftPercent };
 
                         localStorage.setItem('global_pip_btn_position', JSON.stringify(pos));
-                        if (_runtime && _runtime.sendMessage) {
-                            _runtime.sendMessage({ type: "SYNC_DRAG_POSITION", pos });
-                        }
+                        window.PiPUtils.safeSendMessage({ type: "SYNC_DRAG_POSITION", pos });
                     }
                     if (options.onDragEnd) options.onDragEnd(data);
                 }
@@ -299,11 +305,9 @@
                     if (localSaved) restorePos(localSaved);
                 } catch (e) { }
 
-                if (_runtime && _runtime.sendMessage) {
-                    _runtime.sendMessage({ type: "GET_DRAG_POSITION" }, (res) => {
-                        if (res && res.pos) restorePos(res.pos);
-                    });
-                }
+                window.PiPUtils.safeSendMessage({ type: "GET_DRAG_POSITION" }, (res) => {
+                    if (res && res.pos) restorePos(res.pos);
+                });
             }
 
             btn.onclick = (e) => {
@@ -544,38 +548,43 @@
 
         safeSendMessage: function (msg, cb) {
             try {
-                if (!_runtime || typeof _runtime.sendMessage !== 'function') return;
-                
-                // If the context is invalidated, this will throw
-                if (typeof chrome !== 'undefined' && !chrome.runtime?.id) {
+                // 1. Physical API check
+                if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.id) {
                     return;
                 }
+                if (typeof chrome.runtime.sendMessage !== 'function') return;
 
                 let cbCalled = false;
                 const safeCallback = (resp) => {
                     if (cbCalled || typeof cb !== 'function') return;
                     cbCalled = true;
                     try {
-                        const err = _runtime.lastError;
-                        if (err && err.message?.includes('context invalidated')) {
-                            log.debug('Context invalidated - suppressing callback');
+                        const err = chrome.runtime.lastError;
+                        if (err && /context invalidated/i.test(err.message)) {
                             return;
                         }
                         cb(resp);
-                    } catch (err) { }
+                    } catch (e) { }
                 };
 
-                const maybe = _runtime.sendMessage(msg, safeCallback);
-                if (maybe && typeof maybe.then === 'function') {
-                    maybe.then(safeCallback).catch((err) => {
-                        if (err?.message?.includes('context invalidated')) {
-                            log.debug('Context invalidated - suppressing promise catch');
+                // 2. Wrap the call itself - it can throw synchronously in some environments if context is dead
+                const result = chrome.runtime.sendMessage(msg, safeCallback);
+                
+                // 3. Handle MV3 Promise rejections if no callback was provided (though we usually provide one)
+                if (result && typeof result.catch === 'function') {
+                    result.catch(err => {
+                        if (err && /context invalidated/i.test(err.message)) {
+                            // Suppress
+                        } else {
+                            log.debug('sendMessage promise rejection:', err?.message);
                         }
                     });
                 }
             } catch (err) {
-                if (err?.message?.includes('context invalidated')) {
-                    log.debug('Context invalidated - caught synchronously');
+                if (err && /context invalidated/i.test(err.message)) {
+                    log.debug('Context invalidated - prevented crash');
+                } else {
+                    log.debug('safeSendMessage error:', err?.message);
                 }
             }
         },
@@ -622,7 +631,7 @@
      * A 'poke' (sendMessage) from the content script to the background repairs it.
      */
     window.addEventListener('pageshow', (event) => {
-        if (event.persisted && _runtime && _runtime.sendMessage) {
+        if (event.persisted) {
             log.info('Page restored from bfcache. Repairing port and re-syncing...');
             window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
                 if (res?.state) {
