@@ -233,7 +233,7 @@
             btn.id = id;
             if (title) btn.title = title;
             btn.setAttribute(CONSTANTS.PIP_UI_ATTR, 'true');
-            
+
             if (options.icon && window.PIP_UI_ICONS && window.PIP_SVG_UTILS) {
                 const iconDef = window.PIP_UI_ICONS[options.icon];
                 if (iconDef) {
@@ -364,7 +364,7 @@
 
         trackPiPState: function (options) {
             const { onEnter, onExit, metadataCollector, controlEventName } = options;
-            
+
             window.PiPUtils._metadataCollector = metadataCollector;
             window.PiPUtils._onEnter = onEnter;
             window.PiPUtils._onExit = onExit;
@@ -382,26 +382,31 @@
                     return;
                 }
 
-                // [Fix] TikTok Navigation: If we are in a known navigation grace period (e.g. toggling comments),
-                // do NOT force exit PiP. The browser/DOM will naturally end PiP if the element is destroyed.
-                const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
-                                   document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
+                // [Fix] Cross-world race condition: bridge-utils.js (MAIN world) registers its
+                // own popstate handler that calls signalNavigation() and sets data-pip-navigating.
+                // But this content script handler (ISOLATED world) fires BEFORE the page script
+                // handler, so isNavigating() would return false prematurely.
+                // Deferring by 50ms ensures bridge-utils has time to set the navigation flag.
+                setTimeout(() => {
+                    const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
+                                       document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
 
-                if (isNavigating) {
-                    log.debug('Popstate detected during known navigation - suppressing force exit.');
-                    return;
-                }
+                    if (isNavigating) {
+                        log.debug('Popstate detected during known navigation - suppressing force exit.');
+                        return;
+                    }
 
-                if (document.pictureInPictureElement) {
-                    const eventName = window.PiPUtils._controlEventName || 'PIP_Control_Event';
-                    document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
-                    document.exitPictureInPicture().catch(() => {});
-                }
+                    if (document.pictureInPictureElement) {
+                        const eventName = window.PiPUtils._controlEventName || 'PIP_Control_Event';
+                        document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
+                        document.exitPictureInPicture().catch(() => {});
+                    }
 
-                if (window.PiPFloatingButton?.isActive?.()) {
-                    window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
-                    window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
-                }
+                    if (window.PiPFloatingButton?.isActive?.()) {
+                        window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
+                        window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
+                    }
+                }, 50);
             };
 
             window.addEventListener('popstate', handlePopState);
@@ -569,7 +574,7 @@
 
                 // 2. Wrap the call itself - it can throw synchronously in some environments if context is dead
                 const result = chrome.runtime.sendMessage(msg, safeCallback);
-                
+
                 // 3. Handle MV3 Promise rejections if no callback was provided (though we usually provide one)
                 if (result && typeof result.catch === 'function') {
                     result.catch(err => {
@@ -625,6 +630,11 @@
         window.PiPUtils.safeSendMessage({ type: 'SIGNAL_NAVIGATION' });
     });
 
+    // Relay for the auto-close safety timer from the injected bridge
+    window.addEventListener('PIP_AUTO_CLOSED', () => {
+        window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
+    });
+
     /**
      * [Bfcache Fix] Centralized restoration handler.
      * When a page is restored from bfcache, the extension's message port is often broken.
@@ -636,8 +646,8 @@
             window.PiPUtils.safeSendMessage({ type: 'GET_PIP_STATE' }, (res) => {
                 if (res?.state) {
                     // Notify all local components that we are back and have fresh state
-                    document.dispatchEvent(new CustomEvent('UNIP_BFCACHE_RESTORED', { 
-                        detail: { state: res.state } 
+                    document.dispatchEvent(new CustomEvent('UNIP_BFCACHE_RESTORED', {
+                        detail: { state: res.state }
                     }));
                 }
             });

@@ -45,7 +45,6 @@
     // -------- PIP LIFECYCLE --------
 
     document.addEventListener('enterpictureinpicture', () => {
-        baseBridge.addVideoStateListeners(getActiveVideo());
         requestAnimationFrame(() => baseBridge.monitorState(null, true));
     });
 

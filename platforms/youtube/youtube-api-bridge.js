@@ -130,12 +130,11 @@
 
     document.addEventListener('enterpictureinpicture', () => {
         lastPageType = getPageType();
-        baseBridge.addVideoStateListeners(getActiveVideo());
         connectStructuralObservers();
         requestAnimationFrame(() => baseBridge.monitorState(null, true));
         setTimeout(() => {
             monitorInteractiveElements();
-            baseBridge.monitorState();
+            baseBridge.monitorState(null, true);
         }, 150);
     });
 

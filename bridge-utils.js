@@ -21,43 +21,138 @@
     let cachedActiveVideo = null;
     let lastNavigationTime = 0;
     let _isNavigating = false;
+    let _isInteracting = false;
     let _navTimer = null;
+    let _isSwitching = false;
+    let _ghostMonitorTimer = null;
+    let _ghostCounter = 0;
+    let _isManualSession = false;
+    const GHOST_PIP_CLOSE_AFTER_SECONDS = 3;
+
+    function clearNavigation() {
+        _isNavigating = false;
+        _isInteracting = false;
+        if (_navTimer) {
+            clearTimeout(_navTimer);
+            _navTimer = null;
+        }
+        try {
+            document.documentElement.removeAttribute('data-pip-navigating');
+            document.documentElement.removeAttribute('data-pip-interaction');
+            window.dispatchEvent(new CustomEvent('PIP_NAV_STABLE'));
+        } catch (e) {}
+    }
 
     function signalNavigation() {
         lastNavigationTime = Date.now();
         _isNavigating = true;
         try {
             document.documentElement.setAttribute('data-pip-navigating', 'true');
-            // Notify content script so it can relay to background
             window.dispatchEvent(new CustomEvent('PIP_NAVIGATING'));
         } catch (e) {}
 
         if (_navTimer) clearTimeout(_navTimer);
-        _navTimer = setTimeout(() => {
-            _isNavigating = false;
-            _navTimer = null;
-            try {
-                document.documentElement.removeAttribute('data-pip-navigating');
-            } catch (e) {}
-        }, 2500); // 2.5s window to swap videos
+        _navTimer = setTimeout(clearNavigation, 2500);
+    }
+
+    function signalInteraction() {
+        _isInteracting = true;
+        try {
+            document.documentElement.setAttribute('data-pip-interaction', 'true');
+        } catch (e) {}
+
+        // This will also trigger signalNavigation and its cleanup timer
+        signalNavigation();
     }
 
     function isNavigating() {
-        return _isNavigating || document.documentElement.hasAttribute('data-pip-navigating');
+        const _nav = _isNavigating || document.documentElement.hasAttribute('data-pip-navigating');
+        if (_nav) return true;
+
+        const v = getActiveVideoFast();
+        // Fallback: If video is completely unloaded (readyState 0), treat as navigating to avoid stale data
+        if (v && v.readyState === 0) return true;
+
+        return false;
+    }
+
+    function isInteracting() {
+        return _isInteracting || document.documentElement.hasAttribute('data-pip-interaction');
+    }
+
+    // --- Ghost PiP Safety (Auto-close after 3s of empty video) ---
+    function startGhostMonitor() {
+        if (_ghostMonitorTimer) return;
+        _ghostCounter = 0;
+        _ghostMonitorTimer = setInterval(() => {
+            const pip = document.pictureInPictureElement;
+            if (!pip) {
+                stopGhostMonitor();
+                return;
+            }
+
+            // A PiP is a "ghost" if the video is stripped from the DOM or has no data, and we aren't in a navigation window.
+            // [CRITICAL EXEMPTION]: Manual selections (from grids/profiles, including side previews)
+            // are 100% EXEMPT from the ghost monitor. Platforms like TikTok often completely destroy the
+            // <video> element from the DOM when you stop hovering a thumbnail preview. If the user explicitly
+            // chose this video, we must not auto-close it.
+            const isNavWindow = ( _isNavigating || document.documentElement.hasAttribute('data-pip-navigating') );
+
+            const isGhost = _isManualSession
+                ? false // NEVER auto-close manual PiP sessions
+                : (!pip.isConnected || pip.readyState === 0) && !isNavWindow;
+
+            if (isGhost) {
+                _ghostCounter++;
+                if (_ghostCounter >= GHOST_PIP_CLOSE_AFTER_SECONDS) {
+                    // Try to exit PiP. If the element is detached, this may fail, so we also broadcast the exit.
+                    document.exitPictureInPicture().catch(() => {});
+
+                    // Forcefully notify the extension that PiP has ended via the universal utility relay.
+                    // This ensures all UI 'ghost' panels (volume, buttons) are cleaned up even if the video is gone.
+                    window.dispatchEvent(new CustomEvent('PIP_AUTO_CLOSED'));
+
+                    stopGhostMonitor();
+                }
+            } else {
+                _ghostCounter = 0;
+            }
+        }, 1000);
+    }
+
+    function stopGhostMonitor() {
+        if (_ghostMonitorTimer) {
+            clearInterval(_ghostMonitorTimer);
+            _ghostMonitorTimer = null;
+        }
+        _ghostCounter = 0;
     }
 
     // --- Unified Navigation Listener ---
     function setupNavigationListeners() {
         // Detect Scroll
-        const onScrollIntent = () => signalNavigation();
+        const onScrollIntent = () => signalInteraction();
         window.addEventListener('wheel', onScrollIntent, { passive: true });
         window.addEventListener('mousewheel', onScrollIntent, { passive: true });
         window.addEventListener('touchstart', onScrollIntent, { passive: true });
 
+        // --- Session Tracking (Manual vs Auto) ---
+        window.addEventListener('enterpictureinpicture', (e) => {
+            // Check if this PiP was triggered by the manual selector tool
+            // We check both the global window flag AND the DOM attribute for cross-world compatibility
+            _isManualSession = !!(window.__pipExt && window.__pipExt.isSelector) ||
+                              (e.target && e.target.hasAttribute('data-pip-is-selector'));
+
+        }, true);
+
+        window.addEventListener('leavepictureinpicture', () => {
+            _isManualSession = false;
+        }, true);
+
         // Detect Keys
         window.addEventListener('keydown', (e) => {
             if (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.keyCode === 38 || e.keyCode === 40) {
-                signalNavigation();
+                signalInteraction();
             }
         }, { passive: true });
 
@@ -78,6 +173,10 @@
 
     // Initialize listeners
     setupNavigationListeners();
+
+    // Universal PiP monitoring
+    window.addEventListener('enterpictureinpicture', startGhostMonitor, true);
+    window.addEventListener('leavepictureinpicture', stopGhostMonitor, true);
 
     function isEligibleForPiP(video, rect) {
         if (!video) return false;
@@ -276,23 +375,28 @@
 
     function switchToVideo(newVideo, onSwitchCallback) {
         const currentPiP = document.pictureInPictureElement;
-        if (!newVideo || newVideo === currentPiP || (window.BridgeUtils && window.BridgeUtils._isSwitching)) return;
+        if (!newVideo || newVideo === currentPiP || _isSwitching) return;
 
         signalNavigation();
-        if (window.BridgeUtils) window.BridgeUtils._isSwitching = true;
+        _isSwitching = true;
 
         const performSwitch = () => {
             newVideo.removeAttribute('disablePictureInPicture');
             newVideo.requestPictureInPicture()
                 .then(() => {
-                    onSwitchCallback?.(newVideo);
+                    clearNavigation();
+                    // Force an immediate state broadcast for the new video
+                    if (onSwitchCallback) onSwitchCallback(newVideo, true);
                     newVideo.play().catch(() => { });
                     setTimeout(() => {
-                        if (window.BridgeUtils) window.BridgeUtils._isSwitching = false;
+                        _isSwitching = false;
+                        if (typeof refreshActiveVideo === 'function') {
+                            refreshActiveVideo();
+                        }
                     }, 150);
                 })
                 .catch(() => {
-                    if (window.BridgeUtils) window.BridgeUtils._isSwitching = false;
+                    _isSwitching = false;
                 });
         };
 
@@ -329,9 +433,9 @@
         return observer;
     }
 
-    function enableAutoSwitching(onSwitchCallback) {
+    function enableAutoSwitching(onSwitchCallback, shouldSwitchFn = null) {
         if (_pipObserver) return;
-        
+
         // Store callback globally within bridge context for the natural play switch
         window.BridgeUtils._onSwitchCallback = onSwitchCallback;
 
@@ -350,7 +454,7 @@
                 // We add a tiny delay to allow the browser to settle and ensure it's not a background pre-roll.
                 requestAnimationFrame(() => {
                     const r = newVideo.getBoundingClientRect();
-                    if (isEligibleForPiP(newVideo, r) && !newVideo.paused) {
+                    if (isEligibleForPiP(newVideo, r) && !newVideo.paused && (!shouldSwitchFn || shouldSwitchFn(newVideo))) {
                         switchToVideo(newVideo, onSwitchCallback);
                     }
                 });
@@ -390,7 +494,9 @@
                     return; // Current video is stable, ignore switch.
                 }
 
-                switchToVideo(newVideo, onSwitchCallback);
+                if (!shouldSwitchFn || shouldSwitchFn(newVideo)) {
+                    switchToVideo(newVideo, onSwitchCallback);
+                }
             }
 
         }, {
@@ -546,9 +652,10 @@
             if (document.pictureInPictureElement === v) {
                 await document.exitPictureInPicture();
             } else {
-                if (typeof preSync === 'function') preSync();
+                if (typeof preSync === 'function') preSync(v);
                 if (v.hasAttribute('disablePictureInPicture')) v.removeAttribute('disablePictureInPicture');
                 await v.requestPictureInPicture();
+                clearNavigation();
             }
         } catch (e) { /* Safe catch */ }
     }
@@ -606,16 +713,18 @@
      * Generalized live-status detector.
      * @param {HTMLVideoElement} video
      * @param {string|string[]} extraSelectors - Platform-specific live indicators
+     * @param {Element} [root] - Optional root element to scope the search
      * @returns {boolean}
      */
-    function detectIsLive(video, extraSelectors = []) {
+    function detectIsLive(video, extraSelectors = [], root = null) {
         if (!video) return false;
         const durationIsLive = video.duration === Infinity || !Number.isFinite(video.duration);
         if (durationIsLive) return true;
 
         const selectors = Array.isArray(extraSelectors) ? extraSelectors : [extraSelectors];
+        const searchRoot = root || document;
         for (const sel of selectors) {
-            if (document.querySelector(sel)) return true;
+            if (searchRoot.querySelector(sel)) return true;
         }
         return false;
     }
@@ -632,16 +741,16 @@
      */
     function createMonitorState(opts) {
         let lastState = null;
-        return (e, forceBroadcast = false) => {
-            const currentPiP = document.pictureInPictureElement;
-            const targetVideo = currentPiP || (e instanceof HTMLVideoElement ? e : (e?.target instanceof HTMLVideoElement ? e.target : getActiveVideoFast()));
 
+        return (targetVideo, currentPiP, e, forceBroadcast = false) => {
             if (!targetVideo) return;
+
+            // Basic guard: If no PiP and not forcing, ignore.
             if (!currentPiP && !forceBroadcast) return;
-            if (currentPiP && targetVideo !== currentPiP) return;
 
             const playing = !targetVideo.paused;
-            if (isNavigating() && !playing) return;
+            // Removed the old navigation guard as it was blocking specialized UI states (like TikTok's minimalist loader).
+            // Individual platform bridges now manage their own UI stability during transitions.
 
             const state = {
                 playing,
@@ -684,40 +793,69 @@
             supportedActions = {}
         } = options;
 
-        const monitorState = createMonitorState({
+        let lastAttachedVideo = null;
+
+        const internalMonitorState = createMonitorState({
             getLikeStatus,
             getFavoriteStatus,
             detectIsLive,
             onStateChange
         });
 
+        const monitorState = (e, forceBroadcast = false) => {
+            const currentPiP = document.pictureInPictureElement;
+            const targetVideo = currentPiP || (e instanceof HTMLVideoElement ? e : (e?.target instanceof HTMLVideoElement ? e.target : getActiveVideoFast()));
+
+            const videoChanged = targetVideo && targetVideo !== lastAttachedVideo;
+            const pipClosed = !currentPiP && lastAttachedVideo;
+
+            if (videoChanged || pipClosed) {
+                if (lastAttachedVideo) {
+                    removeVideoStateListeners(lastAttachedVideo);
+                }
+
+                if (currentPiP && targetVideo) {
+                    addVideoStateListeners(targetVideo);
+                    lastAttachedVideo = targetVideo;
+                } else {
+                    lastAttachedVideo = null;
+                }
+
+                forceBroadcast = true;
+            }
+
+            return internalMonitorState(targetVideo, currentPiP, e, forceBroadcast);
+        };
+
         const eventMap = {
-            'play': monitorState,
-            'playing': monitorState,
-            'pause': monitorState,
-            'volumechange': monitorState,
-            'ratechange': monitorState,
-            'seeked': monitorState,
+            'play': (e) => monitorState(e),
+            'playing': (e) => monitorState(e),
+            'pause': (e) => monitorState(e),
+            'volumechange': (e) => monitorState(e),
+            'ratechange': (e) => monitorState(e),
+            'seeked': (e) => monitorState(e),
             'enterpictureinpicture': () => monitorState(null, true),
             'leavepictureinpicture': () => monitorState(null, true)
         };
 
+        function addVideoStateListeners(video) {
+            if (!video) return;
+            for (const [evt, handler] of Object.entries(eventMap)) {
+                video.addEventListener(evt, handler);
+            }
+        }
+
+        function removeVideoStateListeners(video) {
+            if (!video) return;
+            for (const [evt, handler] of Object.entries(eventMap)) {
+                video.removeEventListener(evt, handler);
+            }
+        }
+
         return {
             monitorState,
-            
-            addVideoStateListeners: (video) => {
-                if (!video) return;
-                for (const [evt, handler] of Object.entries(eventMap)) {
-                    video.addEventListener(evt, handler);
-                }
-            },
-
-            removeVideoStateListeners: (video) => {
-                if (!video) return;
-                for (const [evt, handler] of Object.entries(eventMap)) {
-                    video.removeEventListener(evt, handler);
-                }
-            },
+            addVideoStateListeners,
+            removeVideoStateListeners,
 
             // Standard message dispatcher for the bridge
             handleMessage: (msg) => {
@@ -748,10 +886,20 @@
                         if (video.paused) video.play().catch(() => {}); else video.pause();
                         return { handled: true };
                     case ACTIONS.SEEK:
-                        handleSeek(video, msg.delta);
+                        handleSeek(video, msg.delta ?? msg.value ?? msg.offset);
                         return { handled: true };
                     case ACTIONS.REQUEST_PIP:
                         handleRequestPip({ getVideo });
+                        return { handled: true };
+                    case ACTIONS.EXIT_PIP:
+                        if (document.pictureInPictureElement) {
+                            const video = document.pictureInPictureElement;
+                            document.exitPictureInPicture().catch(() => {});
+                            // Force pause for manual selections on exit via button
+                            if (_isManualSession && video) {
+                                video.pause();
+                            }
+                        }
                         return { handled: true };
                     case ACTIONS.FOCUS_PIP:
                         handleFocusPip();
@@ -773,7 +921,10 @@
         enableFastVideoSwitching,
         enableAntiPause,
         signalNavigation,
+        signalInteraction,
+        clearNavigation,
         isNavigating,
+        isInteracting,
         switchToVideo,
         normalizeToButton,
         handleRequestPip,

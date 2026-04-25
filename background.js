@@ -695,6 +695,7 @@ async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
         const updates = {};
         if (typeof message.isTikTokLive === 'boolean') updates.isTikTokLive = message.isTikTokLive;
         if (typeof message.hasFavorite === 'boolean') updates.hasFavorite = message.hasFavorite;
+        if (typeof message.isTikTokNavigating === 'boolean') updates.isTikTokNavigating = message.isTikTokNavigating;
         await updateAndSync(updates, { type: MSG.SYNC_TIKTOK_LIVE_UI, ...updates });
     }
     sendResponse({ success: true });
@@ -735,10 +736,9 @@ const COMMAND_HANDLERS = {
     
     [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
     [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, null, m, s, r),
-    
+
     [MSG.TOGGLE_MUTE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
     [MSG.TOGGLE_MUTE_VIDEO]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
-    [MSG.CHANGE_MUTE_STATE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, null, m, s, r),
 
     [MSG.SET_VOLUME]: (m, s, r) => handleStateAction('volume', MSG.SYNC_VOLUME_UI, MSG.CHANGE_VOLUME, m, s, r),
     [MSG.CHANGE_VOLUME]: (m, s, r) => handleStateAction('volume', MSG.SYNC_VOLUME_UI, MSG.CHANGE_VOLUME, m, s, r),
@@ -850,9 +850,25 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
     const isNavigationGrace = tabId === _navigationGraceTabId;
 
+    // For same-origin SPA navigations (e.g. TikTok comments toggle changing URL),
+    // start a grace period automatically. The SIGNAL_NAVIGATION message from the
+    // content script may arrive after onUpdated fires due to async timing.
+    if (!isNavigationGrace && tabId === currentState.tabId && changeInfo.url) {
+        try {
+            const oldDomain = currentState.originDomain;
+            const newDomain = getBaseDomain(new URL(tab.url).hostname);
+            if (oldDomain && oldDomain === newDomain) {
+                log.info('Same-domain SPA URL change detected. Starting grace period.');
+                startNavigationGrace(tabId, 3000);
+            }
+        } catch (e) {}
+    }
+
+    const isGracePeriodActive = tabId === _navigationGraceTabId;
+
     // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check)
     if (tabId === currentState.tabId) {
-        if (isNavigationGrace) {
+        if (isNavigationGrace || isGracePeriodActive) {
             log.info('Origin tab updated during navigation grace period. Skipping validation.');
             return;
         }

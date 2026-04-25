@@ -170,19 +170,27 @@
             case MSG.START_SELECTION_MODE: startSelectionMode(); break;
             case MSG.STOP_SELECTION_MODE: stopSelectionMode(); break;
             case MSG.SYNC_PIP_STATE: window.PiPFloatingButton?.updateFallbackUI?.(message.active); break;
-            case MSG.EXIT_PIP:
-                if (document.pictureInPictureElement) {
-                    document.exitPictureInPicture().catch(e => log.error('exitPiP failed:', e));
-                }
-                break;
-
             // ---- Generic video controls (non-supported platforms only) ----
+            case MSG.EXIT_PIP:
             case MSG.CHANGE_VOLUME:
             case MSG.TOGGLE_MUTE_VIDEO:
             case MSG.TOGGLE_PLAY:
             case MSG.SEEK_VIDEO:
             case MSG.NAVIGATE_VIDEO: {
-                if (isSupportedPlatform) break;
+                if (isSupportedPlatform) break; // Supported platforms use their own bridge via relay
+
+                if (message.type === MSG.EXIT_PIP) {
+                    if (document.pictureInPictureElement) {
+                        const video = document.pictureInPictureElement;
+                        document.exitPictureInPicture().catch(e => log.error('exitPiP failed:', e));
+                        // If this was a manual selection (from this tab), pause the video.
+                        if (window.__pipExt?.isSelector || (video && video.hasAttribute('data-pip-is-selector'))) {
+                            video.pause();
+                        }
+                    }
+                    break;
+                }
+
                 const video = document.pictureInPictureElement || document.querySelector('video');
                 if (!video) break;
 
@@ -404,15 +412,25 @@
                         targetVideo.volume = 0.5; // Default to 50% if it was muted/zero
                     }
 
-                    // Signal to the platform inject (e.g. youtube-inject.js) that this PiP
-                    // was triggered by the selector ball, so it can pass pipMode:'manual' in PIP_ACTIVATED.
+                    // Signal to the bridge-utils.js (Main World) via DOM-based flags
+                    // that this PiP was triggered by the selector tool.
+                    targetVideo.setAttribute('data-pip-is-selector', 'true');
+                    targetVideo.setAttribute('data-pip-is-triggered', 'true');
+
                     window.__pipExt.isSelector = true;
                     // Flag that this PiP was triggered by the extension to show the control panel
                     window.__pipExt.isTriggered = true;
                     await targetVideo.requestPictureInPicture();
-                    // Clear flags shortly after — the inject reads them synchronously on enterpictureinpicture
-                    window.__pipExt.isSelector = false;
-                    setTimeout(() => { window.__pipExt.isTriggered = false; }, 500);
+                    // Keep flags active for 2.5s (matching navigation grace) to ensure
+                    // the asynchronous 'enterpictureinpicture' event can read them correctly.
+                    setTimeout(() => {
+                        window.__pipExt.isSelector = false;
+                        window.__pipExt.isTriggered = false;
+                        if (targetVideo && targetVideo.isConnected) {
+                            targetVideo.removeAttribute('data-pip-is-selector');
+                            targetVideo.removeAttribute('data-pip-is-triggered');
+                        }
+                    }, 2500);
 
                     // --- TARGETED SHIELDS (TikTok): Block only video previews, allow everything else ---
                     if (window.location.hostname.includes('tiktok.com')) {
@@ -452,9 +470,9 @@
                                 shield.className = 'pip-targeted-shield';
                                 shield.style.cssText = `
                                     position: fixed;
-                                    top: ${rect.top}px; 
-                                    left: ${rect.left}px; 
-                                    width: ${rect.width}px; 
+                                    top: ${rect.top}px;
+                                    left: ${rect.left}px;
+                                    width: ${rect.width}px;
                                     height: ${rect.height}px;
                                     z-index: 2147483646; /* High but below PiP UI */
                                     background: rgba(0,0,0,0); /* Ensure hit-test */
@@ -556,7 +574,7 @@
 
                                 if (_shieldAbortCtrl) { _shieldAbortCtrl.abort(); _shieldAbortCtrl = null; }
 
-                                log.info('🔓 Targeted Shields REMOVED.');
+                                log.info('ðŸ”“ Targeted Shields REMOVED.');
                             }
                         };
 
@@ -595,7 +613,6 @@
                 }
 
                 const { MSG } = window.PIP_CONSTANTS;
-                    window.PiPUtils.safeSendMessage({ type: MSG.PIP_DEACTIVATED, force: true });
                 window.PiPUtils.safeSendMessage({ type: MSG.STOP_SELECTION_MODE_GLOBAL });
                 // Cleanup immediately after action locally too
                 stopSelectionMode();

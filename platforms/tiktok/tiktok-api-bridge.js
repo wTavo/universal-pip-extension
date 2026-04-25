@@ -7,7 +7,7 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, detectIsLive, createBaseBridge, isNavigating } = window.BridgeUtils;
+    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, detectIsLive, createBaseBridge, isInteracting, signalInteraction } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -21,50 +21,83 @@
         MUTE_BTN: '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
     };
 
-    // -------- HELPERS --------
+    // -------- SESSION CACHE (Ultimate Performance & Memory Safety) --------
+    const sessionCache = new WeakMap();
+
+    function getSession(video) {
+        if (!video) return {};
+        let session = sessionCache.get(video);
+
+        // TikTok recycles <video> nodes. If the source changes, we MUST flush all states!
+        if (session && session.cachedSrc !== video.currentSrc) {
+            session = null;
+            sessionCache.delete(video);
+        }
+
+        if (!session) {
+            session = {
+                item: null,
+                sidebar: null,
+                likeBtn: null,
+                favBtn: null,
+                muteBtn: null,
+                isAd: null,
+                isLive: null,
+                missingButtonsSince: null,
+                cachedSrc: video.currentSrc
+            };
+            sessionCache.set(video, session);
+        }
+
+        // Validate individual elements connectivity (for virtualized lists)
+        // If the video moved to a new card/item, we MUST reset the cached elements.
+        const currentItem = video.closest(SELECTORS.ITEM);
+        if (session.item && (session.item !== currentItem || !session.item.isConnected)) {
+            session.item = null;
+            session.sidebar = null;
+            session.likeBtn = null;
+            session.favBtn = null;
+            session.muteBtn = null;
+            session.isAd = null;
+            session.isLive = null;
+            session.missingButtonsSince = null;
+        }
+
+        return session;
+    }
 
     function getTikTokItem(video) {
-        if (!video) return null;
-        return video.closest(SELECTORS.ITEM);
+        const session = getSession(video);
+        if (session.item) return session.item;
+        session.item = video.closest(SELECTORS.ITEM);
+        return session.item;
     }
 
     function getTikTokSidebar(video) {
+        const session = getSession(video);
+        if (session.sidebar && session.sidebar.isConnected) return session.sidebar;
+
         const item = getTikTokItem(video);
         if (!item) return null;
-        return item.querySelector(SELECTORS.SIDEBAR) || 
-               (item.parentElement ? item.parentElement.querySelector(SELECTORS.SIDEBAR) : null);
+
+        session.sidebar = item.querySelector(SELECTORS.SIDEBAR) ||
+                         (item.parentElement ? item.parentElement.querySelector(SELECTORS.SIDEBAR) : null);
+        return session.sidebar;
     }
 
     // -------- BUTTON FINDERS --------
 
-    let lastLikeVideo = null;
-    let lastFavVideo = null;
-    let cachedLikeBtn = null;
-    let cachedFavBtn = null;
-
-    function findLikeButton(video) {
+    function findButton(video, selector) {
+        const item = getTikTokItem(video);
         const sidebar = getTikTokSidebar(video);
+
         if (sidebar) {
-            const icon = sidebar.querySelector(SELECTORS.LIKE_ICON);
+            const icon = sidebar.querySelector(selector);
             if (icon) return normalizeToButton(icon);
         }
-        const root = getTikTokItem(video) || document;
-        const icons = root.querySelectorAll(`${SELECTORS.LIKE_ICON}:not([data-pip-managed])`);
-        if (icons.length) {
-            const buttons = Array.from(icons).map(el => el.closest('button')).filter(Boolean);
-            return normalizeToButton(getClosestCandidate(video, buttons));
-        }
-        return null;
-    }
 
-    function findFavoriteButton(video) {
-        const sidebar = getTikTokSidebar(video);
-        if (sidebar) {
-            const icon = sidebar.querySelector(SELECTORS.FAV_ICON);
-            if (icon) return normalizeToButton(icon);
-        }
-        const root = getTikTokItem(video) || document;
-        const icons = root.querySelectorAll(`${SELECTORS.FAV_ICON}:not([data-pip-managed])`);
+        const root = item || document;
+        const icons = root.querySelectorAll(`${selector}:not([data-pip-managed])`);
         if (icons.length) {
             const buttons = Array.from(icons).map(el => el.closest('button')).filter(Boolean);
             return normalizeToButton(getClosestCandidate(video, buttons));
@@ -73,19 +106,17 @@
     }
 
     function getLikeButton(video) {
-        if (!video) return null;
-        if (video === lastLikeVideo && cachedLikeBtn?.isConnected) return cachedLikeBtn;
-        cachedLikeBtn = findLikeButton(video);
-        lastLikeVideo = video;
-        return cachedLikeBtn;
+        const session = getSession(video);
+        if (session.likeBtn && session.likeBtn.isConnected) return session.likeBtn;
+        session.likeBtn = findButton(video, SELECTORS.LIKE_ICON);
+        return session.likeBtn;
     }
 
     function getFavoriteButton(video) {
-        if (!video) return null;
-        if (video === lastFavVideo && cachedFavBtn?.isConnected) return cachedFavBtn;
-        cachedFavBtn = findFavoriteButton(video);
-        lastFavVideo = video;
-        return cachedFavBtn;
+        const session = getSession(video);
+        if (session.favBtn && session.favBtn.isConnected) return session.favBtn;
+        session.favBtn = findButton(video, SELECTORS.FAV_ICON);
+        return session.favBtn;
     }
 
     // -------- STATE DETECTION HELPERS --------
@@ -120,18 +151,53 @@
         return false;
     }
 
-    function detectIsLiveLocal(video) {
-        return detectIsLive(video, [SELECTORS.LIVE_TITLE, '.live-stream-title']);
+    function detectIsLiveLocal(video, root = null) {
+        const session = getSession(video);
+        // If we already confirmed it's a Live, no need to re-check root unless forced
+        if (session.isLive !== null && !root) return session.isLive;
+
+        const observeRoot = root || getTikTokItem(video);
+        const isLiveConfirmed = detectIsLive(video, [SELECTORS.LIVE_TITLE, '.live-stream-title'], observeRoot);
+
+        if (!root) session.isLive = isLiveConfirmed;
+        return isLiveConfirmed;
     }
 
     function detectIsAd(video) {
+        const session = getSession(video);
+        if (session.isAd !== null) return session.isAd;
+
         const item = getTikTokItem(video);
-        return item ? !!item.querySelector(SELECTORS.AD_TAG) : false;
+        session.isAd = item ? !!item.querySelector(SELECTORS.AD_TAG) : false;
+        return session.isAd;
     }
 
     function findMuteButton(video) {
-        const muteBtnCandidates = document.querySelectorAll(SELECTORS.MUTE_BTN);
-        return normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
+        const session = getSession(video);
+        if (session.muteBtn && session.muteBtn.isConnected) return session.muteBtn;
+
+        const item = getTikTokItem(video);
+        const root = item || document;
+        const muteBtnCandidates = root.querySelectorAll(SELECTORS.MUTE_BTN);
+        session.muteBtn = normalizeToButton(getClosestCandidate(video, muteBtnCandidates));
+        return session.muteBtn;
+    }
+
+    function shouldAutoSwitchToVideo(video) {
+        if (!video || video === document.pictureInPictureElement) return false;
+
+        const item = getTikTokItem(video);
+        const itemRect = item?.getBoundingClientRect?.() || video.getBoundingClientRect();
+        const minHeight = window.innerHeight * 0.55;
+        const minWidth = window.innerWidth * 0.35;
+        const hasSidebar = !!getTikTokSidebar(video);
+        const isLiveCandidate = detectIsLiveLocal(video);
+        const looksLikePrimarySurface = itemRect.height >= minHeight || itemRect.width >= minWidth;
+
+        // Explore/grid hover previews can start playing under the cursor, but they are
+        // usually lack the main feed action sidebar. We only auto-switch when the
+        // candidate looks like a primary feed surface or an actual live.
+        return isLiveCandidate || (hasSidebar && looksLikePrimarySurface);
     }
 
     // -------- BASE BRIDGE INITIALIZATION --------
@@ -145,15 +211,46 @@
         findMuteBtn: findMuteButton,
         onStateChange: (state) => {
             const video = document.pictureInPictureElement || getActiveVideo();
+            const session = getSession(video);
+
+            // 1. Scoped detections (Optimized via WeakMap session cache)
+            // If the video is completely unloaded, reset Ad/Live flags to ensure they are re-checked for the new content.
+            if (video?.readyState === 0) {
+                session.isAd = null;
+                session.isLive = null;
+            }
+
             const isAd = detectIsAd(video);
-            state.isTikTokLive = state.isLive;
-            state.hasFavorite = (state.isTikTokLive || isAd) ? false : !!getFavoriteButton(video);
+
+            const likeBtn = getLikeButton(video);
+            const favBtn = getFavoriteButton(video);
+
+            if (likeBtn && favBtn) {
+                session.missingButtonsSince = null;
+            } else if (!session.missingButtonsSince) {
+                session.missingButtonsSince = Date.now();
+            }
+            const missingDuration = session.missingButtonsSince ? (Date.now() - session.missingButtonsSince) : 0;
+
+            // Define transitioning state: video is empty OR basic social buttons are missing from DOM.
+            const isTransitioning = (video?.readyState === 0 || (!state.isLive && !isAd && (!likeBtn || !favBtn) && missingDuration < 3000));
+
+            // Keep "live" scoped to actual TikTok restrictions (real live streams / ads).
+            // Transitional swaps between feed videos should not collapse the control panel UI.
+            state.isTikTokLive = (state.isLive || isAd);
+            state.hasFavorite = (state.isLive || isAd) ? false : !!favBtn;
+
+            // Preserve the navigation hint for diagnostics/state sync, but do not overload it as a
+            // "hide almost everything" signal during normal next/prev feed navigation.
+            state.isTikTokNavigating = isTransitioning && !isInteracting();
+
             document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
         },
         supportedActions: {
             [ACTIONS.TOGGLE_LIKE]: (video) => { getLikeButton(video)?.click(); return { handled: true }; },
             [ACTIONS.TOGGLE_FAVORITE]: (video) => { getFavoriteButton(video)?.click(); return { handled: true }; },
             [ACTIONS.NAVIGATE_VIDEO]: (video, msg) => {
+                signalInteraction();
                 const key = msg.direction === 'next' ? 'ArrowDown' : 'ArrowUp';
                 const eventOptions = { key, code: key, keyCode: msg.direction === 'next' ? 40 : 38, bubbles: true, cancelable: true, view: window };
                 document.body.dispatchEvent(new KeyboardEvent('keydown', eventOptions));
@@ -188,12 +285,12 @@
                         video.dispatchEvent(new KeyboardEvent('keydown', opts));
                     }
                     // We let the base handle the numerical volume part if possible
-                    return null; 
+                    return null;
                 }
                 return null;
             },
-            [ACTIONS.CHECK_STATUS]: () => {
-                cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
+            [ACTIONS.CHECK_STATUS]: (video) => {
+                if (video) sessionCache.delete(video);
                 monitorInteractiveElements();
                 baseBridge.monitorState(null, true);
                 return { handled: true };
@@ -204,11 +301,9 @@
     // -------- PIP LIFECYCLE --------
 
     document.addEventListener('enterpictureinpicture', () => {
-        lastLikeVideo = null; lastFavVideo = null; cachedLikeBtn = null; cachedFavBtn = null;
-        baseBridge.addVideoStateListeners(getActiveVideo());
         connectStructuralObservers();
-        requestAnimationFrame(() => { monitorInteractiveElements(); baseBridge.monitorState(); });
-        setTimeout(() => { monitorInteractiveElements(); baseBridge.monitorState(); }, 150);
+        requestAnimationFrame(() => { monitorInteractiveElements(); baseBridge.monitorState(null, true); });
+        setTimeout(() => { monitorInteractiveElements(); baseBridge.monitorState(null, true); }, 150);
     });
 
     document.addEventListener('leavepictureinpicture', () => {
@@ -219,8 +314,7 @@
         favClickController?.abort();
         disconnectStructuralObservers();
         likeBtnObserver = null; favBtnObserver = null; likeClickController = null; favClickController = null;
-        lastActiveLikeBtn = null; lastActiveFavBtn = null; cachedLikeBtn = null; cachedFavBtn = null;
-        lastLikeVideo = null; lastFavVideo = null;
+        lastActiveLikeBtn = null; lastActiveFavBtn = null;
     });
 
     if (enableAutoSwitching) {
@@ -229,16 +323,24 @@
             connectStructuralObservers();
             monitorInteractiveElements();
             baseBridge.monitorState(newVideo);
-        });
+        }, shouldAutoSwitchToVideo);
     }
 
     if (enableAntiPause) enableAntiPause(() => !!document.pictureInPictureElement);
 
+    window.addEventListener('PIP_NAV_STABLE', () => {
+        if (document.pictureInPictureElement) {
+            monitorInteractiveElements();
+            baseBridge.monitorState(null, true);
+        }
+    });
+
+
     // -------- INTERACTIVE OBSERVERS --------
 
     let likeBtnObserver = null, favBtnObserver = null;
-    let lastActiveLikeBtn = null, lastActiveFavBtn = null;
     let likeClickController = null, favClickController = null;
+    let lastActiveLikeBtn = null, lastActiveFavBtn = null;
     let lastScanTs = 0;
 
     function setupButtonController(newBtn, lastBtn, type) {
@@ -304,8 +406,8 @@
         if (action === ACTIONS.REQUEST_PIP) {
             handleRequestPip({
                 getVideo: getActiveVideo,
-                preSync: () => {
-                    cachedLikeBtn = null; cachedFavBtn = null; lastLikeVideo = null; lastFavVideo = null;
+                preSync: (video) => {
+                    if (video) sessionCache.delete(video);
                     monitorInteractiveElements();
                     baseBridge.monitorState(null, true);
                 }

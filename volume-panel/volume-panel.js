@@ -36,6 +36,8 @@
         pipUtilsRetryInterval: null,
         _panelDims: null,
         _destroyed: false,
+        contentControlsReady: false,
+        _contentReadyRaf: null,
         sync: {
             onLike: null,
             onFav: null,
@@ -98,6 +100,209 @@
         return STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
     }
 
+    function clearContentReadyRaf() {
+        if (STATE._contentReadyRaf !== null) {
+            cancelAnimationFrame(STATE._contentReadyRaf);
+            STATE._contentReadyRaf = null;
+        }
+    }
+
+    function resetContentControls() {
+        clearContentReadyRaf();
+        STATE.contentControlsReady = false;
+    }
+
+    function markContentControlsReady() {
+        clearContentReadyRaf();
+        STATE.contentControlsReady = true;
+    }
+
+    function hasDeferredContentState(state = {}) {
+        return !!(
+            state.supportsNavigation !== undefined ||
+            state.isLive !== undefined ||
+            state.isTikTokLive !== undefined ||
+            state.isTikTokNavigating !== undefined ||
+            state.playing !== undefined ||
+            state.liked !== undefined ||
+            state.favorited !== undefined ||
+            state.hasFavorite !== undefined
+        );
+    }
+
+    function hideDeferredControls() {
+        const muteBtn = targetDoc.getElementById('globalPipMute');
+        if (muteBtn) muteBtn.style.display = 'none';
+
+        const seekRow = targetDoc.getElementById('pipSeekButtonsRow');
+        const seekSep = targetDoc.getElementById('pipSeekSeparator');
+        if (seekRow) seekRow.style.display = 'none';
+        if (seekSep) seekSep.style.display = 'none';
+
+        targetDoc.querySelectorAll('.pip-separator').forEach(separator => {
+            separator.style.display = 'none';
+        });
+
+        const navContainer = targetDoc.getElementById('globalPipNavContainer');
+        if (navContainer) navContainer.style.display = 'none';
+    }
+
+    function scheduleDeferredControls(state = {}) {
+        if (STATE.contentControlsReady || !hasDeferredContentState(state)) return;
+        if (STATE._contentReadyRaf !== null) return;
+
+        STATE._contentReadyRaf = requestAnimationFrame(() => {
+            STATE._contentReadyRaf = null;
+            if (STATE._destroyed || !STATE.isPipActive || STATE.contentControlsReady) return;
+            markContentControlsReady();
+            showToggleButton(STATE.pipState || state);
+        });
+    }
+
+    function getTikTokPanelMode(source = {}) {
+        const isTikTokLive = !!source.isTikTokLive;
+        const isTikTokNavigating = !!source.isTikTokNavigating;
+        return {
+            isTikTokLive,
+            isTikTokNavigating,
+            hasFavorite: source.hasFavorite !== false,
+            hideSocial: isTikTokLive || isTikTokNavigating,
+            hideSeek: isTikTokLive || isTikTokNavigating,
+            hideMute: isTikTokNavigating,
+            compactNav: isTikTokNavigating
+        };
+    }
+
+    function applyTikTokDynamicControls(source = {}) {
+        if (!STATE.contentControlsReady) {
+            hideDeferredControls();
+            return getTikTokPanelMode(source);
+        }
+
+        const mode = getTikTokPanelMode(source);
+
+        const likeBtn = targetDoc.getElementById('globalPipNavContainer_like');
+        const favBtn = targetDoc.getElementById('globalPipNavContainer_favorite');
+        if (likeBtn) likeBtn.style.display = mode.hideSocial ? 'none' : 'flex';
+        if (favBtn) favBtn.style.display = (mode.hideSocial || !mode.hasFavorite) ? 'none' : 'flex';
+
+        const shouldHideSeek = mode.hideSeek || STATE.isSelectorMode;
+        const seekRow = targetDoc.getElementById('pipSeekButtonsRow');
+        const seekSep = targetDoc.getElementById('pipSeekSeparator');
+        if (seekRow) seekRow.style.display = shouldHideSeek ? 'none' : 'flex';
+        if (seekSep) seekSep.style.display = shouldHideSeek ? 'none' : 'block';
+
+        targetDoc.querySelectorAll('.pip-separator').forEach(separator => {
+            separator.style.display = shouldHideSeek ? 'none' : 'block';
+        });
+
+        const muteBtn = targetDoc.getElementById('globalPipMute');
+        if (muteBtn) muteBtn.style.display = mode.hideMute ? 'none' : 'flex';
+
+        const navContainer = targetDoc.getElementById("globalPipNavContainer");
+        if (navContainer && !STATE.isSelectorMode) {
+            navContainer.style.display = mode.compactNav ? "none" : "flex";
+        }
+
+        if (!mode.isTikTokLive && !mode.compactNav && !STATE.isSelectorMode) {
+            const arcBtn = targetDoc.getElementById("pipNavCollapseBtn");
+            const wrapper = targetDoc.getElementById("pipNavButtonsWrapper");
+            STATE.isNavExpanded = true;
+            if (arcBtn) window.PiPVolumePanelUI.updateNavCollapse(arcBtn, true);
+            if (wrapper) {
+                wrapper.style.display = "flex";
+                wrapper.style.opacity = "1";
+            }
+        }
+
+        return mode;
+    }
+
+    function applyTikTokNavUiState(navContainer, navUi, state = {}) {
+        if (!navContainer || !navUi) return;
+
+        if (!STATE.contentControlsReady) {
+            navContainer.style.display = 'none';
+            if (navUi.likeBtn) navUi.likeBtn.style.display = 'none';
+            if (navUi.favBtn) navUi.favBtn.style.display = 'none';
+            return;
+        }
+
+        const mode = getTikTokPanelMode(state);
+        const hideFavorite = mode.hideSocial || !mode.hasFavorite;
+
+        if (navUi.likeBtn) navUi.likeBtn.style.display = mode.hideSocial ? 'none' : 'flex';
+        if (navUi.favBtn) navUi.favBtn.style.display = hideFavorite ? 'none' : 'flex';
+        navContainer.style.display = (!STATE.isSelectorMode && mode.compactNav) ? 'none' : 'flex';
+    }
+
+    function setSliderValue(value) {
+        if (!STATE.slider) return;
+        STATE.isProgrammaticVolumeUpdate = true;
+        STATE.slider.value = value;
+        STATE.slider.setAttribute('aria-valuenow', value);
+        STATE.isProgrammaticVolumeUpdate = false;
+        STATE.lastVolumeSent = Number(value);
+    }
+
+    function syncMuteToggle(muted) {
+        STATE.currentMuteState = Boolean(muted);
+        const slider = STATE.slider;
+
+        if (!slider) {
+            updateMuteButton(muted, 100);
+            return;
+        }
+
+        if (Date.now() < STATE._ignoreMuteResetUntil) return;
+
+        if (STATE.currentMuteState) {
+            const val = parseFloat(slider.value);
+            if (val > 0) STATE.preMuteVolume = val;
+            setSliderValue(0);
+            updateMuteButton(true, 0);
+            return;
+        }
+
+        const val = parseFloat(slider.value);
+        const restoreVol = val > 0 ? val : STATE.preMuteVolume;
+        setSliderValue(restoreVol);
+        updateMuteButton(false, restoreVol);
+    }
+
+    function syncVolumeState(msg) {
+        const slider = STATE.slider;
+
+        if (slider && msg.volume !== undefined && !STATE.isUserDraggingVolume && Math.abs(parseFloat(slider.value) - msg.volume) >= 1) {
+            setSliderValue(msg.volume);
+        }
+
+        if (msg.muted === undefined) {
+            if (msg.volume !== undefined) updateMuteButton(STATE.currentMuteState, msg.volume);
+            return;
+        }
+
+        STATE.currentMuteState = Boolean(msg.muted);
+        const inGraceWindow = Date.now() < STATE._ignoreMuteResetUntil;
+
+        if (STATE.currentMuteState) {
+            if (slider && !STATE.isUserDraggingVolume && !inGraceWindow) {
+                const currentVolume = parseFloat(slider.value);
+                if (currentVolume > 0) STATE.preMuteVolume = currentVolume;
+                setSliderValue(0);
+            }
+            if (!inGraceWindow) updateMuteButton(true, 0);
+            return;
+        }
+
+        let targetVol = STATE.preMuteVolume;
+        if (msg.volume !== undefined && msg.volume > 0) {
+            targetVol = msg.volume;
+            STATE.preMuteVolume = targetVol;
+        }
+        updateMuteButton(false, slider ? parseFloat(slider.value) : targetVol);
+    }
+
     const Handlers = {
         PANEL_PING: (msg, resp) => {
             resp({ alive: true, panelActive: true });
@@ -114,6 +319,9 @@
             }
 
             STATE._destroyed = false;
+            resetContentControls();
+            // Sync selector mode from state
+            STATE.isSelectorMode = state.pipMode === 'manual' || !!state.isSelectorMode;
             showToggleButton(state);
             resp({ success: true });
         },
@@ -138,103 +346,34 @@
         },
 
         UPDATE_MUTE_STATE: (msg, resp) => {
-            STATE.currentMuteState = Boolean(msg.muted);
-            const slider = STATE.slider;
-
-            if (slider) {
-                const inGraceWindow = Date.now() < STATE._ignoreMuteResetUntil;
-                if (!inGraceWindow) {
-                    if (STATE.currentMuteState) {
-                        const val = parseFloat(slider.value);
-                        if (val > 0) STATE.preMuteVolume = val;
-                        STATE.isProgrammaticVolumeUpdate = true;
-                        slider.value = 0;
-                        slider.setAttribute('aria-valuenow', '0');
-                        STATE.isProgrammaticVolumeUpdate = false;
-                        STATE.lastVolumeSent = 0;
-                        updateMuteButton(true, 0);
-                    } else {
-                        const val = parseFloat(slider.value);
-                        const restoreVol = val > 0 ? val : STATE.preMuteVolume;
-                        STATE.isProgrammaticVolumeUpdate = true;
-                        slider.value = restoreVol;
-                        slider.setAttribute('aria-valuenow', restoreVol);
-                        STATE.isProgrammaticVolumeUpdate = false;
-                        STATE.lastVolumeSent = Number(restoreVol);
-                        updateMuteButton(false, restoreVol);
-                    }
-                }
-            } else {
-                updateMuteButton(msg.muted, 100);
-            }
+            syncMuteToggle(msg.muted);
             resp({ success: true });
         },
 
         SYNC_VOLUME_UI: (msg, resp) => {
-            const slider = STATE.slider;
-            if (slider && msg.volume !== undefined && !STATE.isUserDraggingVolume && Math.abs(parseFloat(slider.value) - msg.volume) >= 1) {
-                STATE.isProgrammaticVolumeUpdate = true;
-                slider.value = msg.volume;
-                slider.setAttribute('aria-valuenow', msg.volume);
-                STATE.isProgrammaticVolumeUpdate = false;
-                STATE.lastVolumeSent = Number(msg.volume);
-            }
-
-            if (msg.muted !== undefined) {
-                STATE.currentMuteState = Boolean(msg.muted);
-                const inGraceWindow = Date.now() < STATE._ignoreMuteResetUntil;
-                if (STATE.currentMuteState) {
-                    if (slider && !STATE.isUserDraggingVolume && !inGraceWindow) {
-                        const cv = parseFloat(slider.value);
-                        if (cv > 0) STATE.preMuteVolume = cv;
-                        STATE.isProgrammaticVolumeUpdate = true;
-                        slider.value = 0;
-                        slider.setAttribute('aria-valuenow', '0');
-                        STATE.isProgrammaticVolumeUpdate = false;
-                        STATE.lastVolumeSent = 0;
-                    }
-                    if (!inGraceWindow) updateMuteButton(true, 0);
-                } else {
-                    let targetVol = STATE.preMuteVolume;
-                    if (msg.volume !== undefined && msg.volume > 0) {
-                        targetVol = msg.volume;
-                        STATE.preMuteVolume = targetVol;
-                    }
-                    updateMuteButton(false, slider ? parseFloat(slider.value) : targetVol);
-                }
-            } else if (msg.volume !== undefined) {
-                updateMuteButton(STATE.currentMuteState, msg.volume);
-            }
+            syncVolumeState(msg);
             resp({ success: true });
         },
 
-        SYNC_LIKE_UI: (m, r) => { UTILS.dispatchSync("pip-like-sync", { liked: m.liked }); r({ success: true }); },
-        SYNC_FAVORITE_UI: (m, r) => { UTILS.dispatchSync("pip-favorite-sync", { favorited: m.favorited }); r({ success: true }); },
-        SYNC_PLAYBACK_UI: (m, r) => { UTILS.dispatchSync("pip-playback-sync", { playing: m.playing }); r({ success: true }); },
+        SYNC_LIKE_UI: (m, r) => { markContentControlsReady(); UTILS.dispatchSync("pip-like-sync", { liked: m.liked }); showToggleButton(STATE.pipState || {}); r({ success: true }); },
+        SYNC_FAVORITE_UI: (m, r) => { markContentControlsReady(); UTILS.dispatchSync("pip-favorite-sync", { favorited: m.favorited }); showToggleButton(STATE.pipState || {}); r({ success: true }); },
+        SYNC_PLAYBACK_UI: (m, r) => { markContentControlsReady(); UTILS.dispatchSync("pip-playback-sync", { playing: m.playing }); showToggleButton(STATE.pipState || {}); r({ success: true }); },
 
         SYNC_TIKTOK_LIVE_UI: (msg, resp) => {
             const isTikTokLive = !!msg.isTikTokLive;
+            const isTikTokNavigating = !!msg.isTikTokNavigating;
             const hasFavorite = msg.hasFavorite !== false;
-            const hideFav = isTikTokLive || !hasFavorite;
-            const hideSeek = isTikTokLive;
-
-            // Toggle favorites button visibility
-            const likeBtn = targetDoc.getElementById('globalPipNavContainer_like');
-            const favBtn = targetDoc.getElementById('globalPipNavContainer_favorite');
-            if (likeBtn) likeBtn.style.display = isTikTokLive ? 'none' : 'flex';
-            if (favBtn) favBtn.style.display = hideFav ? 'none' : 'flex';
-
-            // Toggle seek buttons and separator visibility
-            const seekRow = targetDoc.getElementById('pipSeekButtonsRow');
-            const seekSep = targetDoc.getElementById('pipSeekSeparator');
-            if (seekRow) seekRow.style.display = hideSeek ? 'none' : 'flex';
-            if (seekSep) seekSep.style.display = hideSeek ? 'none' : 'block';
 
             // Update cached state
             if (STATE.pipState) {
                 STATE.pipState.isTikTokLive = isTikTokLive;
                 STATE.pipState.hasFavorite = hasFavorite;
+                STATE.pipState.isTikTokNavigating = isTikTokNavigating;
             }
+
+            markContentControlsReady();
+            applyTikTokDynamicControls({ isTikTokLive, isTikTokNavigating, hasFavorite });
+            showToggleButton(STATE.pipState || {});
 
             resp({ success: true });
         },
@@ -262,7 +401,15 @@
         },
 
         SYNC_PIP_STATE: (msg, resp) => {
-            if (msg.state) STATE.pipState = msg.state;
+            if (msg.state) {
+                STATE.pipState = msg.state;
+                STATE.isSelectorMode = msg.state.pipMode === 'manual' || !!msg.state.isSelectorMode;
+                // Reactive update: if the panel is already showing, force a refresh
+                // to handle mode changes (e.g. from Auto to Manual) immediately.
+                if (STATE.isPanelVisible || STATE.toggleButton) {
+                    showToggleButton(STATE.pipState);
+                }
+            }
             resp({ success: true });
         }
     };
@@ -274,10 +421,10 @@
         } else {
             // Background-only messages or unknown
             const ignored = [
-                MSG.TOGGLE_MUTE_VIDEO, MSG.LIKE_VIDEO, MSG.FAVORITE_VIDEO, 
-                MSG.NAVIGATE_VIDEO, MSG.CHANGE_VOLUME, MSG.SEEK_VIDEO, 
-                MSG.VALIDATE_PIP_STATUS, MSG.PIP_SESSION_STARTED, 
-                MSG.SHOW_GLOBAL_PIP_BTN, MSG.EXIT_PIP, MSG.START_SELECTION_MODE, 
+                MSG.TOGGLE_MUTE_VIDEO, MSG.LIKE_VIDEO, MSG.FAVORITE_VIDEO,
+                MSG.NAVIGATE_VIDEO, MSG.CHANGE_VOLUME, MSG.SEEK_VIDEO,
+                MSG.VALIDATE_PIP_STATUS, MSG.PIP_SESSION_STARTED,
+                MSG.SHOW_GLOBAL_PIP_BTN, MSG.EXIT_PIP, MSG.START_SELECTION_MODE,
                 MSG.SYNC_PIP_STATE, MSG.STOP_SELECTION_MODE, MSG.VISIBILITY_PING
             ];
             if (ignored.includes(message.type)) {
@@ -463,8 +610,9 @@
         STATE.controlPanel.appendChild(muteBtn);
 
         const isTikTokLive = !!STATE.pipState?.isTikTokLive;
+        const isTikTokNavigating = !!STATE.pipState?.isTikTokNavigating;
         const isTikTok = STATE.pipState?.platform === 'tiktok';
-        // For TikTok: always create seek section (so it can be toggled), but hide if live.
+        // For TikTok: always create seek section so live/feed-refresh states can toggle it.
         // For other platforms: only create if not selector mode and not live.
         const shouldCreateSeek = isTikTok
             ? !STATE.isSelectorMode
@@ -473,7 +621,7 @@
         if (shouldCreateSeek) {
             const seekSep = window.PiPVolumePanelUI.createSeparator(targetDoc);
             seekSep.id = 'pipSeekSeparator';
-            if (isTikTok && (isTikTokLive || STATE.isLive)) seekSep.style.display = 'none';
+            if (!STATE.contentControlsReady || (isTikTok && (isTikTokLive || isTikTokNavigating || STATE.isLive))) seekSep.style.display = 'none';
             STATE.controlPanel.appendChild(seekSep);
 
             const seekFeedback = window.PiPVolumePanelUI.buildHUD(targetDoc);
@@ -512,7 +660,7 @@
 
             const buttonsRow = targetDoc.createElement("div");
             buttonsRow.id = "pipSeekButtonsRow";
-            const seekDisplay = (isTikTok && (isTikTokLive || STATE.isLive)) ? 'none' : 'flex';
+            const seekDisplay = (!STATE.contentControlsReady || (isTikTok && (isTikTokLive || isTikTokNavigating || STATE.isLive))) ? 'none' : 'flex';
             buttonsRow.style.cssText = `display: ${seekDisplay}; flex-direction: column; gap: 8px; justify-content: center; width: 100%; margin-top: 5px; align-items: center;`;
             buttonsRow.appendChild(rewindBtn);
             buttonsRow.appendChild(forwardBtn);
@@ -547,13 +695,7 @@
         if (STATE.slider && hasVolume) {
             if (isMuted && state.volume > 0) STATE.preMuteVolume = state.volume;
             const displayVolume = isMuted ? 0 : state.volume;
-
-            STATE.isProgrammaticVolumeUpdate = true;
-            STATE.slider.value = displayVolume;
-            STATE.slider.setAttribute('aria-valuenow', displayVolume);
-            STATE.isProgrammaticVolumeUpdate = false;
-
-            STATE.lastVolumeSent = Number(displayVolume);
+            setSliderValue(displayVolume);
         }
         STATE.currentMuteState = isMuted;
         updateMuteButton(isMuted, hasVolume ? state.volume : 100);
@@ -561,16 +703,33 @@
         STATE.isSelectorMode = state.pipMode === "manual" || !!state.isSelectorMode;
         STATE.isLive = !!state.isLive;
         const isTikTokLive = !!state.isTikTokLive;
+        const isTikTokNavigating = !!state.isTikTokNavigating;
         const isTikTok = state.platform === 'tiktok';
 
-        const seekRow = targetDoc.getElementById("pipSeekButtonsRow");
-        const separators = targetDoc.querySelectorAll('.pip-separator');
-        if (STATE.isSelectorMode || (isTikTok && isTikTokLive)) {
-            if (seekRow) seekRow.style.display = "none";
-            separators.forEach(s => s.style.display = 'none');
+        if (isTikTok) {
+            applyTikTokDynamicControls(state);
         } else {
-            if (seekRow) seekRow.style.display = "flex";
-            separators.forEach(s => s.style.display = 'block');
+            const seekRow = targetDoc.getElementById("pipSeekButtonsRow");
+            const seekSep = targetDoc.getElementById("pipSeekSeparator");
+            const separators = targetDoc.querySelectorAll('.pip-separator');
+            const muteBtn = targetDoc.getElementById('globalPipMute');
+
+            if (!STATE.contentControlsReady) {
+                if (muteBtn) muteBtn.style.display = 'none';
+                if (seekRow) seekRow.style.display = "none";
+                if (seekSep) seekSep.style.display = "none";
+                separators.forEach(s => s.style.display = 'none');
+            } else if (STATE.isSelectorMode) {
+                if (muteBtn) muteBtn.style.display = 'flex';
+                if (seekRow) seekRow.style.display = "none";
+                if (seekSep) seekSep.style.display = "none";
+                separators.forEach(s => s.style.display = 'none');
+            } else {
+                if (muteBtn) muteBtn.style.display = 'flex';
+                if (seekRow) seekRow.style.display = "flex";
+                if (seekSep) seekSep.style.display = 'block';
+                separators.forEach(s => s.style.display = 'block');
+            }
         }
 
         if (state.navExpanded !== undefined) STATE.isNavExpanded = state.navExpanded;
@@ -586,10 +745,11 @@
         const currentPlatform = state.platform || 'unknown';
         const currentIsShorts = !!state.isShorts;
         const currentSupportsNav = !!state.supportsNavigation;
+        const currentIsSelector = !!(state.pipMode === 'manual' || state.isSelectorMode);
         const needsRebuild = navContainer && (
             navContainer.getAttribute('data-platform') !== currentPlatform ||
             navContainer.getAttribute('data-is-shorts') !== String(currentIsShorts) ||
-            navContainer.getAttribute('data-supports-nav') !== String(currentSupportsNav)
+            navContainer.getAttribute('data-is-selector') !== String(currentIsSelector)
         );
 
         if (needsRebuild) {
@@ -610,11 +770,16 @@
             const isTikTokLive = !!state.isTikTokLive;
             let navUi = null;
 
+            if (currentPlatform === 'tiktok' && !STATE.isSelectorMode && !isTikTokLive && !isTikTokNavigating) {
+                STATE.isNavExpanded = true;
+            }
+
             if (!navContainer) {
                 navUi = window.PiPVolumePanelUI.buildNavGroup(targetDoc, currentIsShorts);
                 navContainer = navUi.container;
                 navContainer.setAttribute('data-platform', currentPlatform);
                 navContainer.setAttribute('data-is-shorts', String(currentIsShorts));
+                navContainer.setAttribute('data-is-selector', String(currentIsSelector));
                 navContainer.setAttribute('data-supports-nav', String(currentSupportsNav));
                 navContainer.setAttribute('data-original-display', 'flex');
 
@@ -719,23 +884,25 @@
                     navUi.nextBtn?.remove();
                 }
                 if (STATE.isSelectorMode) playPauseBtn.remove();
-                
+
                 // TikTok dynamic controls: use display:none so they can be restored later.
                 // Other platforms continue using .remove() for simplicity if they don't need restoration.
                 if (currentPlatform === 'tiktok') {
-                    const hideLike = isTikTokLive;
-                    const hideFav = isTikTokLive || state.hasFavorite === false;
-                    likeBtn.style.display = hideLike ? 'none' : 'flex';
-                    favBtn.style.display = hideFav ? 'none' : 'flex';
+                    applyTikTokNavUiState(navContainer, navUi, state);
                 } else {
                     if (state.platform === 'twitch') likeBtn.remove();
                     if (state.platform !== 'instagram') favBtn.remove();
                 }
 
                 targetDoc.body.appendChild(navContainer);
+                if (currentPlatform === 'tiktok') applyTikTokDynamicControls(state);
                 requestAnimationFrame(() => updateNavPosition());
             } else {
                 // Nav container already exists - update visual state
+                if (state.platform === 'tiktok' && !STATE.isSelectorMode && !state.isTikTokLive && !state.isTikTokNavigating) {
+                    STATE.isNavExpanded = true;
+                }
+
                 const arcBtn = navContainer.querySelector("#pipNavCollapseBtn");
                 if (arcBtn) window.PiPVolumePanelUI.updateNavCollapse(arcBtn, STATE.isNavExpanded);
 
@@ -747,20 +914,7 @@
                     buttonsWrapper.style.opacity = canShow ? '1' : '0';
                 }
 
-                // TikTok: sync dynamic button visibility from current state
-                if (state.platform === 'tiktok') {
-                    const ttLive = !!state.isTikTokLive;
-                    const hasFav = state.hasFavorite !== false;
-                    const hideFav = ttLive || !hasFav;
-                    
-                    const existingLike = navContainer.querySelector('#globalPipNavContainer_like');
-                    if (existingLike) existingLike.style.display = ttLive ? 'none' : 'flex';
-
-                    const existingFav = navContainer.querySelector('#globalPipNavContainer_favorite');
-                    if (existingFav) existingFav.style.display = hideFav ? 'none' : 'flex';
-
-                    // Note: Seek visibility is handled at the top of showToggleButton now.
-                }
+                if (state.platform === 'tiktok') applyTikTokDynamicControls(state);
 
                 // Sync other UI states
                 UTILS.dispatchSync("pip-like-sync", { liked: !!state.liked });
@@ -769,8 +923,24 @@
             }
         }
 
+        if (!STATE.contentControlsReady) {
+            hideDeferredControls();
+            scheduleDeferredControls(state);
+        }
+
         if (state.uiVisible !== undefined) {
-            [STATE.toggleButton, STATE.controlPanel, targetDoc.getElementById("globalPipNavContainer")].forEach(el => window.PiPVolumePanelLayout.setVisibility(el, state.uiVisible));
+            window.PiPVolumePanelLayout.setVisibility(STATE.toggleButton, state.uiVisible);
+            window.PiPVolumePanelLayout.setVisibility(STATE.controlPanel, state.uiVisible);
+
+            const navContainer = targetDoc.getElementById("globalPipNavContainer");
+            const effectiveVisibility = state.sessionVisible ?? state.uiVisible ?? true;
+            // UI Policy: Hide navigation/social buttons in manual selection mode.
+            // Also hide if visibility is globally or domain-disabled.
+            if (STATE.isSelectorMode || !effectiveVisibility || (state.platform === 'tiktok' && state.isTikTokNavigating)) {
+                if (navContainer) navContainer.style.display = 'none';
+            } else if (navContainer) {
+                navContainer.style.display = 'flex';
+            }
         }
 
         window.PiPVolumePanelLayout.setupViewportListener(() => {
@@ -796,11 +966,7 @@
             if (typeof volume === "number" && STATE.slider) {
                 if (muted && volume > 0) STATE.preMuteVolume = volume;
                 const displayVolume = muted ? 0 : volume;
-
-                STATE.isProgrammaticVolumeUpdate = true;
-                STATE.slider.value = displayVolume;
-                STATE.slider.setAttribute('aria-valuenow', displayVolume);
-                STATE.isProgrammaticVolumeUpdate = false;
+                setSliderValue(displayVolume);
             }
             if (typeof muted === "boolean") { STATE.currentMuteState = muted; updateMuteButton(muted, typeof volume === "number" ? volume : 100); }
         });
@@ -829,6 +995,7 @@
         STATE._destroyed = true;
         STATE.isPipActive = false;
         STATE.isPanelVisible = false;
+        resetContentControls();
 
         window.PiPVolumePanelLayout.cleanup();
         if (STATE.pipUtilsRetryInterval) { clearInterval(STATE.pipUtilsRetryInterval); STATE.pipUtilsRetryInterval = null; }
