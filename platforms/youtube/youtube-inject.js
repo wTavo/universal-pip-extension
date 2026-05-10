@@ -48,7 +48,7 @@
 
     // --- Bridge Communication ---
     document.addEventListener('YouTube_State_Update', (e) => {
-        const { liked, playing, volume, muted, isLive } = e.detail || {};
+        const { liked, playing, volume, muted, isLive, isAd } = e.detail || {};
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof isLive === 'boolean') currentIsLive = isLive;
@@ -58,6 +58,7 @@
 
             if (typeof liked === 'boolean') send('UPDATE_LIKE_STATE', { liked });
             if (typeof playing === 'boolean') send('UPDATE_PLAYBACK_STATE', { playing });
+            if (typeof isAd === 'boolean') send('UPDATE_AD_STATE', { isAd });
             if (typeof volume === 'number' || typeof muted === 'boolean') {
                 send('UPDATE_VOLUME_STATE', { volume, muted });
             }

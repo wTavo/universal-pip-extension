@@ -25,6 +25,16 @@
     window.PiPUtils.PIP_UI_ZINDEX = 2147483647;
 
     Object.assign(window.PiPUtils, {
+        notifyPipClosed: function ({ force = true, hidePanel = false } = {}) {
+            window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force });
+            if (hidePanel) {
+                window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
+            }
+            if (window.PiPFloatingButton?._refreshManagedIcons) {
+                window.PiPFloatingButton._isPipActiveGlobal = false;
+                window.PiPFloatingButton._refreshManagedIcons(false);
+            }
+        },
 
         getUIVisibility: function () {
             return window.__pipUIVisible !== false;
@@ -382,31 +392,10 @@
                     return;
                 }
 
-                // [Fix] Cross-world race condition: bridge-utils.js (MAIN world) registers its
-                // own popstate handler that calls signalNavigation() and sets data-pip-navigating.
-                // But this content script handler (ISOLATED world) fires BEFORE the page script
-                // handler, so isNavigating() would return false prematurely.
-                // Deferring by 50ms ensures bridge-utils has time to set the navigation flag.
-                setTimeout(() => {
-                    const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
-                                       document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
-
-                    if (isNavigating) {
-                        log.debug('Popstate detected during known navigation - suppressing force exit.');
-                        return;
-                    }
-
-                    if (document.pictureInPictureElement) {
-                        const eventName = window.PiPUtils._controlEventName || 'PIP_Control_Event';
-                        document.dispatchEvent(new CustomEvent(eventName, { detail: { action: 'EXIT_PIP' } }));
-                        document.exitPictureInPicture().catch(() => {});
-                    }
-
-                    if (window.PiPFloatingButton?.isActive?.()) {
-                        window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
-                        window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
-                    }
-                }, 50);
+                // TikTok and other SPAs use history changes for in-page UI such as comment drawers.
+                // A popstate by itself is not proof that PiP ended, so mark navigation and let the
+                // native leavepictureinpicture/background validation paths handle real exits.
+                window.PiPUtils.safeSendMessage({ type: 'SIGNAL_NAVIGATION' });
             };
 
             window.addEventListener('popstate', handlePopState);
@@ -450,10 +439,7 @@
                         return;
                     }
 
-                    window.PiPUtils.safeSendMessage({
-                        type: 'PIP_DEACTIVATED',
-                        force: isManualExit
-                    });
+                    window.PiPUtils.notifyPipClosed({ force: isManualExit, hidePanel: false });
 
                     if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
                 }, 100);
@@ -632,7 +618,7 @@
 
     // Relay for the auto-close safety timer from the injected bridge
     window.addEventListener('PIP_AUTO_CLOSED', () => {
-        window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force: true });
+        window.PiPUtils.notifyPipClosed({ force: true, hidePanel: true });
     });
 
     /**

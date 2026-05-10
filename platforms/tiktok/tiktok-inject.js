@@ -13,6 +13,8 @@
 
     const TIKTOK_ITEM_SELECTOR = 'section[id^="media-card-"], [data-e2e="recommend-list-item-container"], [class*="ItemContainer"], article';
     const TIKTOK_LIVE_SELECTOR = '[data-e2e="live-title"], .live-stream-title';
+    const TIKTOK_AD_SELECTOR = '[data-e2e="ad-tag"], [aria-label*="Sponsored"], [aria-label*="Publicidad"], [aria-label*="Patrocinado"]';
+    const TIKTOK_AD_TEXT_RE = /\b(Sponsored|Promoted|Publicidad|Anuncio|Patrocinado)\b/i;
     const TIKTOK_LIVE_ROUTE_RE = /(^|\/)live(\/|$)/i;
 
     function detectLiveInInject(video) {
@@ -24,19 +26,32 @@
         return !!root.querySelector(TIKTOK_LIVE_SELECTOR);
     }
 
+    function detectAdInInject(video) {
+        if (!video) return false;
+        const item = video.closest?.(TIKTOK_ITEM_SELECTOR);
+        const root = item || document;
+        if (root.querySelector(TIKTOK_AD_SELECTOR)) return true;
+        const text = (root.innerText || root.textContent || '').trim();
+        return TIKTOK_AD_TEXT_RE.test(text);
+    }
+
+    function detectRestrictedInInject(video) {
+        return detectLiveInInject(video) || detectAdInInject(video);
+    }
+
     function syncLiveStateFromVideo(video) {
         const targetVideo = video || document.pictureInPictureElement;
         if (!targetVideo) return;
 
-        const isLive = detectLiveInInject(targetVideo);
-        currentIsLive = isLive;
-        currentHasFavorite = !isLive;
+        const isRestricted = detectRestrictedInInject(targetVideo);
+        currentIsLive = isRestricted;
+        currentHasFavorite = !isRestricted;
         currentIsNavigating = false;
 
         window.PiPUtils?.safeSendMessage?.({
             type: 'UPDATE_TIKTOK_LIVE_STATE',
-            isTikTokLive: isLive,
-            hasFavorite: !isLive,
+            isTikTokLive: isRestricted,
+            hasFavorite: !isRestricted,
             isTikTokNavigating: false
         });
     }
@@ -56,13 +71,13 @@
             },
             controlEventName: 'TikTok_Control_Event',
             metadataCollector: (video) => {
-                const directIsLive = detectLiveInInject(video);
+                const directIsRestricted = detectRestrictedInInject(video);
                 return {
                     platform: 'tiktok',
                     supportsNavigation: true,
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
-                    isLive: directIsLive,
+                    isLive: directIsRestricted,
                     isTikTokNavigating: currentIsNavigating,
                     liked: currentLiked,
                     favorited: currentFavorited

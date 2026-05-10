@@ -90,18 +90,33 @@
             if (this._syncInitialized) return;
             this._syncInitialized = true;
 
+            const syncLocalPipState = (isActive) => {
+                this._isPipActiveGlobal = isActive;
+                this._refreshManagedIcons(isActive);
+            };
+
             const _onMsg = (msg) => {
                 const { MSG } = window.PIP_CONSTANTS || {};
                 if (msg.type === MSG?.PIP_ACTIVATED || msg.type === MSG?.PIP_SESSION_STARTED) {
-                    this._isPipActiveGlobal = true;
-                    this._refreshManagedIcons(true);
+                    syncLocalPipState(true);
                 } else if (msg.type === MSG?.HIDE_VOLUME_PANEL || msg.type === MSG?.PIP_DEACTIVATED) {
-                    this._isPipActiveGlobal = false;
-                    this._refreshManagedIcons(false);
+                    syncLocalPipState(false);
                 }
             };
 
             chrome.runtime.onMessage.addListener(_onMsg);
+
+            document.addEventListener('enterpictureinpicture', () => {
+                syncLocalPipState(true);
+            }, true);
+
+            document.addEventListener('leavepictureinpicture', () => {
+                setTimeout(() => {
+                    if (!document.pictureInPictureElement) {
+                        syncLocalPipState(false);
+                    }
+                }, 100);
+            }, true);
 
             // Initial sync
             if (window.PiPUtils?.safeSendMessage) {

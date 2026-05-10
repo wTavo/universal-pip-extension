@@ -23,22 +23,34 @@
     let _isNavigating = false;
     let _isInteracting = false;
     let _navTimer = null;
+    let _interactionTimer = null;
     let _isSwitching = false;
     let _ghostMonitorTimer = null;
-    let _ghostCounter = 0;
+    let _ghostStartedAt = 0;
     let _isManualSession = false;
-    const GHOST_PIP_CLOSE_AFTER_SECONDS = 3;
+    let _autoSwitchPlayListener = null;
+    const GHOST_PIP_CLOSE_AFTER_SECONDS = 1;
+    const GHOST_PIP_MONITOR_INTERVAL_MS = 250;
+
+    function clearInteraction() {
+        _isInteracting = false;
+        if (_interactionTimer) {
+            clearTimeout(_interactionTimer);
+            _interactionTimer = null;
+        }
+        try {
+            document.documentElement.removeAttribute('data-pip-interaction');
+        } catch (e) {}
+    }
 
     function clearNavigation() {
         _isNavigating = false;
-        _isInteracting = false;
         if (_navTimer) {
             clearTimeout(_navTimer);
             _navTimer = null;
         }
         try {
             document.documentElement.removeAttribute('data-pip-navigating');
-            document.documentElement.removeAttribute('data-pip-interaction');
             window.dispatchEvent(new CustomEvent('PIP_NAV_STABLE'));
         } catch (e) {}
     }
@@ -52,7 +64,7 @@
         } catch (e) {}
 
         if (_navTimer) clearTimeout(_navTimer);
-        _navTimer = setTimeout(clearNavigation, 2500);
+        _navTimer = setTimeout(clearNavigation, 0);
     }
 
     function signalInteraction() {
@@ -60,6 +72,9 @@
         try {
             document.documentElement.setAttribute('data-pip-interaction', 'true');
         } catch (e) {}
+
+        if (_interactionTimer) clearTimeout(_interactionTimer);
+        _interactionTimer = setTimeout(clearInteraction, INTERACTION_GRACE_MS);
 
         // This will also trigger signalNavigation and its cleanup timer
         signalNavigation();
@@ -80,10 +95,10 @@
         return _isInteracting || document.documentElement.hasAttribute('data-pip-interaction');
     }
 
-    // --- Ghost PiP Safety (Auto-close after 3s of empty video) ---
+    // --- Ghost PiP Safety (Auto-close after configured seconds of empty video) ---
     function startGhostMonitor() {
         if (_ghostMonitorTimer) return;
-        _ghostCounter = 0;
+        _ghostStartedAt = 0;
         _ghostMonitorTimer = setInterval(() => {
             const pip = document.pictureInPictureElement;
             if (!pip) {
@@ -91,20 +106,20 @@
                 return;
             }
 
-            // A PiP is a "ghost" if the video is stripped from the DOM or has no data, and we aren't in a navigation window.
+            // signalNavigation() is still used by UI/state logic, but it no longer delays ghost closing.
+            // A PiP is a "ghost" if the video is stripped from the DOM or has no data.
             // [CRITICAL EXEMPTION]: Manual selections (from grids/profiles, including side previews)
             // are 100% EXEMPT from the ghost monitor. Platforms like TikTok often completely destroy the
             // <video> element from the DOM when you stop hovering a thumbnail preview. If the user explicitly
             // chose this video, we must not auto-close it.
-            const isNavWindow = ( _isNavigating || document.documentElement.hasAttribute('data-pip-navigating') );
-
             const isGhost = _isManualSession
                 ? false // NEVER auto-close manual PiP sessions
-                : (!pip.isConnected || pip.readyState === 0) && !isNavWindow;
+                : (!pip.isConnected || pip.readyState === 0);
 
             if (isGhost) {
-                _ghostCounter++;
-                if (_ghostCounter >= GHOST_PIP_CLOSE_AFTER_SECONDS) {
+                if (!_ghostStartedAt) _ghostStartedAt = Date.now();
+                const ghostElapsedMs = Date.now() - _ghostStartedAt;
+                if (ghostElapsedMs >= GHOST_PIP_CLOSE_AFTER_SECONDS * 1000) {
                     // Try to exit PiP. If the element is detached, this may fail, so we also broadcast the exit.
                     document.exitPictureInPicture().catch(() => {});
 
@@ -115,9 +130,9 @@
                     stopGhostMonitor();
                 }
             } else {
-                _ghostCounter = 0;
+                _ghostStartedAt = 0;
             }
-        }, 1000);
+        }, GHOST_PIP_MONITOR_INTERVAL_MS);
     }
 
     function stopGhostMonitor() {
@@ -125,7 +140,7 @@
             clearInterval(_ghostMonitorTimer);
             _ghostMonitorTimer = null;
         }
-        _ghostCounter = 0;
+        _ghostStartedAt = 0;
     }
 
     // --- Unified Navigation Listener ---
@@ -444,9 +459,9 @@
 
         // 1. Natural Play Switch: If a new video starts playing, it's likely the user's focus.
         // This handles cases where IntersectionObserver might be slow or platform attributes are missing.
-        document.addEventListener('play', (e) => {
+        _autoSwitchPlayListener = (e) => {
             const currentPiP = document.pictureInPictureElement;
-            if (!currentPiP || window.BridgeUtils?._isSwitching) return;
+            if (!currentPiP || _isSwitching) return;
 
             const newVideo = e.target;
             if (newVideo.tagName === 'VIDEO' && newVideo !== currentPiP) {
@@ -459,7 +474,8 @@
                     }
                 });
             }
-        }, true);
+        };
+        document.addEventListener('play', _autoSwitchPlayListener, true);
 
         // 2. IntersectionObserver: Standard fallback for scrolling without autoplay, or for pre-emptive swaps.
         _pipObserver = new IntersectionObserver((entries) => {
@@ -480,7 +496,7 @@
             const newVideo = visibleEntry.target;
             const currentPiP = document.pictureInPictureElement;
 
-            if (currentPiP && newVideo !== currentPiP && !(window.BridgeUtils && window.BridgeUtils._isSwitching)) {
+            if (currentPiP && newVideo !== currentPiP && !_isSwitching) {
                 // STABILITY CHECK: If current video is still highly visible, don't switch.
                 const rect = currentPiP.getBoundingClientRect();
                 const vh = window.innerHeight;
@@ -546,6 +562,10 @@
     function disableAutoSwitching() {
         _pipObserver?.disconnect();
         _pipMutationObserver?.disconnect();
+        if (_autoSwitchPlayListener) {
+            document.removeEventListener('play', _autoSwitchPlayListener, true);
+            _autoSwitchPlayListener = null;
+        }
 
         _pipObserver = null;
         _pipMutationObserver = null;
@@ -937,3 +957,4 @@
     };
 
 })();
+    const INTERACTION_GRACE_MS = 1500;

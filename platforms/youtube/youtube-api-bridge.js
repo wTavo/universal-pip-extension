@@ -17,7 +17,9 @@
         SHORTS_RENDERER: 'ytd-reel-video-renderer[is-active]',
         MUTE_BTN: 'button.ytp-mute-button, button.ytdVolumeControlsMuteIconButton',
         PLAYER_CONTAINER: '.html5-video-player',
-        LIVE_BADGE: '.ytp-live, [data-layer="badge-label"]'
+        LIVE_BADGE: '.ytp-live, [data-layer="badge-label"]',
+        PLAYER_AD_MARKER: '.ytp-ad-player-overlay, .ytp-ad-module, .ytp-ad-text, .ytp-ad-skip-button, .ytp-ad-preview-container',
+        SHORTS_AD_MARKER: 'ytd-promoted-video-renderer, ytd-display-ad-renderer, [aria-label*="Sponsored"], [aria-label*="Promoted"], [aria-label*="Publicidad"], [aria-label*="Anuncio"], [aria-label*="Patrocinado"], [aria-label*="Promocionado"]'
     };
 
     function getPageType(url = window.location.href) {
@@ -76,6 +78,19 @@
         return video.closest('.html5-video-player') || window.movie_player || null;
     }
 
+    function isVisibleElement(el) {
+        if (!el || !el.isConnected) return false;
+        const rect = el.getBoundingClientRect?.();
+        if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+        const style = window.getComputedStyle?.(el);
+        return !style || (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0');
+    }
+
+    function getActiveShortRoot(video) {
+        if (!video) return null;
+        return video.closest('ytd-reel-video-renderer') || document.querySelector(SELECTORS.SHORTS_RENDERER);
+    }
+
     function findMuteButton(video) {
         if (!video) return null;
         const candidates = document.querySelectorAll(SELECTORS.MUTE_BTN);
@@ -84,6 +99,35 @@
 
     function detectIsLiveLocal(video) {
         return detectIsLive(video, [SELECTORS.LIVE_BADGE]);
+    }
+
+    function detectIsAdLocal(video) {
+        const player = getPlayer(video);
+        if (player?.classList?.contains('ad-showing')) return true;
+
+        if (player) {
+            const playerMarkers = Array.from(player.querySelectorAll(SELECTORS.PLAYER_AD_MARKER));
+            if (playerMarkers.some(isVisibleElement)) return true;
+        }
+
+        const shortRoot = getActiveShortRoot(video);
+        if (!shortRoot) return false;
+
+        const shortMarkers = Array.from(shortRoot.querySelectorAll(SELECTORS.SHORTS_AD_MARKER));
+        if (shortMarkers.some(isVisibleElement)) return true;
+
+        const text = (shortRoot.innerText || shortRoot.textContent || '').trim();
+        return /\b(Sponsored|Promoted|Publicidad|Anuncio|Patrocinado|Promocionado)\b/i.test(text);
+    }
+
+    let lastReportedAdState = null;
+
+    function reportAdStateIfChanged(force = false) {
+        if (!document.pictureInPictureElement) return;
+        const isAd = detectIsAdLocal(document.pictureInPictureElement || getActiveVideo());
+        if (!force && isAd === lastReportedAdState) return;
+        lastReportedAdState = isAd;
+        document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: { isAd } }));
     }
 
     // -------- BASE BRIDGE INITIALIZATION --------
@@ -96,6 +140,8 @@
         findMuteBtn: findMuteButton,
         getPlayer,
         onStateChange: (state) => {
+            state.isAd = detectIsAdLocal(document.pictureInPictureElement || getActiveVideo());
+            lastReportedAdState = state.isAd;
             document.dispatchEvent(new CustomEvent('YouTube_State_Update', { detail: state }));
         },
         supportedActions: {
@@ -148,14 +194,14 @@
         lastActiveLikeBtn = null;
         cachedLikeBtn = null;
         lastLikeVideo = null;
+        lastReportedAdState = null;
     });
 
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
             disconnectStructuralObservers();
             connectStructuralObservers();
-            monitorInteractiveElements();
-            baseBridge.monitorState(newVideo);
+            refreshPipStateNow();
         });
     }
 
@@ -195,6 +241,30 @@
     let shortsObserver = null;
     let rootObserver = null;
     let rootDebounceTimer = null;
+    let adStateInterval = null;
+
+    function refreshPipStateNow() {
+        monitorInteractiveElements();
+        baseBridge.monitorState(null, true);
+    }
+
+    function startAdStatePolling() {
+        stopAdStatePolling();
+        adStateInterval = setInterval(() => {
+            if (!document.pictureInPictureElement) {
+                stopAdStatePolling();
+                return;
+            }
+            reportAdStateIfChanged();
+        }, 500);
+    }
+
+    function stopAdStatePolling() {
+        if (adStateInterval) {
+            clearInterval(adStateInterval);
+            adStateInterval = null;
+        }
+    }
 
     function setupShortsObserver() {
         shortsObserver?.disconnect();
@@ -203,8 +273,7 @@
                 containerSelector: 'ytd-shorts, #shorts-container',
                 attribute: 'is-active',
                 onSwitch: (v) => {
-                    monitorInteractiveElements();
-                    baseBridge.monitorState(v);
+                    refreshPipStateNow();
                 }
             });
         }
@@ -225,8 +294,7 @@
         lastPageType = getPageType();
         if (document.pictureInPictureElement) {
             setupShortsObserver();
-            monitorInteractiveElements();
-            baseBridge.monitorState(null, true);
+            refreshPipStateNow();
         }
     });
 
@@ -236,20 +304,29 @@
                 if (rootDebounceTimer) return;
                 rootDebounceTimer = setTimeout(() => {
                     rootDebounceTimer = null;
-                    monitorInteractiveElements();
+                    refreshPipStateNow();
                 }, 300);
             });
         }
         const pipVideo = document.pictureInPictureElement || getActiveVideo();
         const playerContainer = pipVideo ? getPlayer(pipVideo) : null;
         const observeTarget = playerContainer?.parentElement || playerContainer || document.body;
-        try { rootObserver.observe(observeTarget, { childList: true, subtree: true }); } catch (e) { }
+        try {
+            rootObserver.observe(observeTarget, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['class', 'style', 'hidden']
+            });
+        } catch (e) { }
         setupShortsObserver();
+        startAdStatePolling();
     }
 
     function disconnectStructuralObservers() {
         rootObserver?.disconnect();
         shortsObserver?.disconnect();
+        stopAdStatePolling();
         if (rootDebounceTimer) { clearTimeout(rootDebounceTimer); rootDebounceTimer = null; }
     }
 

@@ -32,16 +32,24 @@ let _volumeDragActive = false;
 // Navigation grace period to prevent PiP cleanup during video swaps
 let _navigationGraceTabId = null;
 let _navigationGraceTimer = null;
+const NAVIGATION_GRACE_SIGNAL_MS = 3000;
+const NAVIGATION_GRACE_MANUAL_NAV_MS = 2500;
 
-function startNavigationGrace(tabId, durationMs = 3000) {
+function clearNavigationGrace(tabId = null) {
+    if (tabId !== null && _navigationGraceTabId !== tabId) return;
+    if (_navigationGraceTimer) {
+        clearTimeout(_navigationGraceTimer);
+        _navigationGraceTimer = null;
+    }
+    _navigationGraceTabId = null;
+}
+
+function startNavigationGrace(tabId, durationMs = NAVIGATION_GRACE_SIGNAL_MS) {
     if (!tabId) return;
     _navigationGraceTabId = tabId;
     if (_navigationGraceTimer) clearTimeout(_navigationGraceTimer);
     _navigationGraceTimer = setTimeout(() => {
-        if (_navigationGraceTabId === tabId) {
-            _navigationGraceTabId = null;
-            _navigationGraceTimer = null;
-        }
+        clearNavigationGrace(tabId);
     }, durationMs);
     log.info(`Navigation grace period started for tab ${tabId} (${durationMs}ms)`);
 }
@@ -468,6 +476,8 @@ async function showControlPanel(tabId, overrideVisibility = null) {
 async function performPipGlobalCleanup() {
     log.info('Performing global PiP cleanup.');
 
+    clearNavigationGrace();
+
     // 1. Broadcast HIDE to all tracked/relevant tabs
     await syncToRelevantTabs({ type: MSG.HIDE_VOLUME_PANEL });
 
@@ -578,6 +588,7 @@ async function handlePipActivated(message, sender, sendResponse) {
         (pipState.active && pipState.tabId === newTabId && pipState.isExtensionTriggered);
 
     const originDomain = message.originDomain || getTabDomain(sender.tab);
+    clearNavigationGrace(newTabId);
 
     const newState = {
         ...DEFAULT_PIP_STATE,
@@ -621,14 +632,14 @@ async function handlePipActivated(message, sender, sendResponse) {
 async function handleSignalNavigation(message, sender, sendResponse) {
     const tabId = sender.tab ? sender.tab.id : null;
     if (tabId && tabId === pipState.tabId) {
-        startNavigationGrace(tabId, 3000);
+        startNavigationGrace(tabId, NAVIGATION_GRACE_SIGNAL_MS);
     }
     sendResponse({ success: true });
 }
 
 async function handleNavigateVideo(message, sender, sendResponse) {
     if (pipState.tabId) {
-        startNavigationGrace(pipState.tabId, 2500); // Slightly shorter for manual nav
+        startNavigationGrace(pipState.tabId, NAVIGATION_GRACE_MANUAL_NAV_MS); // Slightly shorter for manual nav
         await safeSendMessage(pipState.tabId, {
             type: MSG.NAVIGATE_VIDEO,
             direction: message.direction
@@ -736,6 +747,7 @@ const COMMAND_HANDLERS = {
     
     [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
     [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, null, m, s, r),
+    [MSG.UPDATE_AD_STATE]: (m, s, r) => handleStateAction('isAd', MSG.SYNC_AD_UI, null, m, s, r),
 
     [MSG.TOGGLE_MUTE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
     [MSG.TOGGLE_MUTE_VIDEO]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
@@ -859,7 +871,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             const newDomain = getBaseDomain(new URL(tab.url).hostname);
             if (oldDomain && oldDomain === newDomain) {
                 log.info('Same-domain SPA URL change detected. Starting grace period.');
-                startNavigationGrace(tabId, 3000);
+                startNavigationGrace(tabId, NAVIGATION_GRACE_SIGNAL_MS);
             }
         } catch (e) {}
     }

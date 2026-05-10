@@ -7,7 +7,31 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, signalNavigation } = window.BridgeUtils;
+    const {
+        ACTIONS,
+        getActiveVideo,
+        getClosestCandidate,
+        enableAutoSwitching,
+        enableAntiPause,
+        normalizeToButton,
+        handleRequestPip,
+        detectIsLive,
+        createBaseBridge,
+        isInteracting,
+        signalInteraction
+    } = window.BridgeUtils;
+
+    // -------- CONSTANTS --------
+
+    const SELECTORS = {
+        ITEM: 'section[id^="media-card-"], [data-e2e="recommend-list-item-container"], [class*="ItemContainer"], article',
+        SIDEBAR: '[class*="ActionBarContainer"]',
+        LIKE_ICON: '[data-e2e="like-icon"], [data-e2e="browse-like-icon"]',
+        FAV_ICON: '[data-e2e="undefined-icon"], [data-e2e="collect-icon"], [data-e2e="browse-collect-icon"], [data-e2e="favorite-icon"]',
+        AD_TAG: '[data-e2e="ad-tag"], [data-e2e*="ad"], [class*="Ad"], [class*="ad-"], [aria-label*="Sponsored"], [aria-label*="Publicidad"], [aria-label*="Patrocinado"]',
+        LIVE_TITLE: '[data-e2e="live-title"], .live-stream-title',
+        MUTE_BTN: '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
+    };
 
     // -------- BUTTON FINDERS --------
 
@@ -110,9 +134,9 @@
 
     const monitorState = (e) => {
         // 1. Context Detection: Prioritize event target or passed element.
-        const targetVideo = (e instanceof HTMLVideoElement) ? e : 
-                           (e && e.target instanceof HTMLVideoElement) ? e.target : 
-                           getActiveVideo();
+        const targetVideo = (e instanceof HTMLVideoElement) ? e :
+            (e && e.target instanceof HTMLVideoElement) ? e.target :
+                getActiveVideo();
 
         if (!targetVideo) return;
 
@@ -126,7 +150,7 @@
         // 'Play' events are ALWAYS trusted as they signal a successful landing.
         const playing = !targetVideo.paused;
         const isNavigating = window.BridgeUtils.isNavigating && window.BridgeUtils.isNavigating();
-        
+
         if (isNavigating && !playing) {
             return;
         }

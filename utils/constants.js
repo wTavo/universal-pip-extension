@@ -17,6 +17,7 @@ const DEFAULT_PIP_STATE = Object.freeze({
     platform: null,
     playing: false,
     isLive: false,
+    isAd: false,
     isTikTokLive: false,
     hasFavorite: true,
     originDomain: null,
@@ -71,6 +72,7 @@ const MSG = Object.freeze({
     UPDATE_FAVORITE_STATE: 'UPDATE_FAVORITE_STATE',
     UPDATE_LIKE_STATE: 'UPDATE_LIKE_STATE',
     UPDATE_PLAYBACK_STATE: 'UPDATE_PLAYBACK_STATE',
+    UPDATE_AD_STATE: 'UPDATE_AD_STATE',
     UPDATE_TIKTOK_LIVE_STATE: 'UPDATE_TIKTOK_LIVE_STATE',
     UPDATE_VOLUME_STATE: 'UPDATE_VOLUME_STATE',
     UPDATE_MUTE_STATE: 'UPDATE_MUTE_STATE',
@@ -80,6 +82,7 @@ const MSG = Object.freeze({
     SYNC_LIKE_UI: 'SYNC_LIKE_UI',
     SYNC_FAVORITE_UI: 'SYNC_FAVORITE_UI',
     SYNC_PLAYBACK_UI: 'SYNC_PLAYBACK_UI',
+    SYNC_AD_UI: 'SYNC_AD_UI',
     SYNC_TIKTOK_LIVE_UI: 'SYNC_TIKTOK_LIVE_UI',
     SYNC_PIP_STATE: 'SYNC_PIP_STATE',
 

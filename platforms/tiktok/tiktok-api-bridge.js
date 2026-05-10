@@ -7,7 +7,19 @@
         return;
     }
 
-    const { ACTIONS, getActiveVideo, getClosestCandidate, enableAutoSwitching, enableAntiPause, normalizeToButton, handleRequestPip, detectIsLive, createBaseBridge, isInteracting, signalInteraction } = window.BridgeUtils;
+    const {
+        ACTIONS,
+        getActiveVideo,
+        getClosestCandidate,
+        enableAutoSwitching,
+        enableAntiPause,
+        normalizeToButton,
+        handleRequestPip,
+        detectIsLive,
+        createBaseBridge,
+        isInteracting,
+        signalInteraction
+    } = window.BridgeUtils;
 
     // -------- CONSTANTS --------
 
@@ -16,10 +28,12 @@
         SIDEBAR: '[class*="ActionBarContainer"]',
         LIKE_ICON: '[data-e2e="like-icon"], [data-e2e="browse-like-icon"]',
         FAV_ICON: '[data-e2e="undefined-icon"], [data-e2e="collect-icon"], [data-e2e="browse-collect-icon"], [data-e2e="favorite-icon"]',
-        AD_TAG: '[data-e2e="ad-tag"]',
+        AD_TAG: '[data-e2e="ad-tag"], [data-e2e*="ad"], [class*="Ad"], [class*="ad-"], [aria-label*="Sponsored"], [aria-label*="Publicidad"], [aria-label*="Patrocinado"]',
         LIVE_TITLE: '[data-e2e="live-title"], .live-stream-title',
         MUTE_BTN: '[data-e2e="video-mute"], button.TUXButton--secondary:has(svg)'
     };
+    const MANUAL_NAV_UI_GRACE_MS = 1800;
+    let manualNavUiGraceUntil = 0;
 
     // -------- SESSION CACHE (Ultimate Performance & Memory Safety) --------
     const sessionCache = new WeakMap();
@@ -44,6 +58,7 @@
                 isAd: null,
                 isLive: null,
                 missingButtonsSince: null,
+                lastStableHasFavorite: true,
                 cachedSrc: video.currentSrc
             };
             sessionCache.set(video, session);
@@ -61,6 +76,7 @@
             session.isAd = null;
             session.isLive = null;
             session.missingButtonsSince = null;
+            session.lastStableHasFavorite = true;
         }
 
         return session;
@@ -81,7 +97,7 @@
         if (!item) return null;
 
         session.sidebar = item.querySelector(SELECTORS.SIDEBAR) ||
-                         (item.parentElement ? item.parentElement.querySelector(SELECTORS.SIDEBAR) : null);
+            (item.parentElement ? item.parentElement.querySelector(SELECTORS.SIDEBAR) : null);
         return session.sidebar;
     }
 
@@ -165,11 +181,19 @@
 
     function detectIsAd(video) {
         const session = getSession(video);
-        if (session.isAd !== null) return session.isAd;
+        if (session.isAd === true) return true;
 
         const item = getTikTokItem(video);
-        session.isAd = item ? !!item.querySelector(SELECTORS.AD_TAG) : false;
-        return session.isAd;
+        if (!item) {
+            return false;
+        }
+
+        const hasAdMarker = !!item.querySelector(SELECTORS.AD_TAG);
+        const text = (item.innerText || item.textContent || '').trim();
+        const hasAdText = /\b(Sponsored|Promoted|Publicidad|Anuncio|Patrocinado)\b/i.test(text);
+        const isAd = hasAdMarker || hasAdText;
+        if (isAd) session.isAd = true;
+        return isAd;
     }
 
     function findMuteButton(video) {
@@ -192,12 +216,14 @@
         const minWidth = window.innerWidth * 0.35;
         const hasSidebar = !!getTikTokSidebar(video);
         const isLiveCandidate = detectIsLiveLocal(video);
+        const isAdCandidate = detectIsAd(video);
         const looksLikePrimarySurface = itemRect.height >= minHeight || itemRect.width >= minWidth;
 
         // Explore/grid hover previews can start playing under the cursor, but they are
         // usually lack the main feed action sidebar. We only auto-switch when the
-        // candidate looks like a primary feed surface or an actual live.
-        return isLiveCandidate || (hasSidebar && looksLikePrimarySurface);
+        // candidate looks like a primary feed surface, an actual live, or an ad slot
+        // reached through feed navigation.
+        return isLiveCandidate || (isAdCandidate && looksLikePrimarySurface) || (hasSidebar && looksLikePrimarySurface);
     }
 
     // -------- BASE BRIDGE INITIALIZATION --------
@@ -227,6 +253,7 @@
 
             if (likeBtn && favBtn) {
                 session.missingButtonsSince = null;
+                session.lastStableHasFavorite = true;
             } else if (!session.missingButtonsSince) {
                 session.missingButtonsSince = Date.now();
             }
@@ -234,15 +261,19 @@
 
             // Define transitioning state: video is empty OR basic social buttons are missing from DOM.
             const isTransitioning = (video?.readyState === 0 || (!state.isLive && !isAd && (!likeBtn || !favBtn) && missingDuration < 3000));
+            const isManualNavWindow = Date.now() < manualNavUiGraceUntil;
+            const isUserDrivenTransition = isTransitioning && (isInteracting() || isManualNavWindow);
 
             // Keep "live" scoped to actual TikTok restrictions (real live streams / ads).
             // Transitional swaps between feed videos should not collapse the control panel UI.
             state.isTikTokLive = (state.isLive || isAd);
-            state.hasFavorite = (state.isLive || isAd) ? false : !!favBtn;
+            state.hasFavorite = (state.isLive || isAd)
+                ? false
+                : (isUserDrivenTransition ? session.lastStableHasFavorite : !!favBtn);
 
-            // Preserve the navigation hint for diagnostics/state sync, but do not overload it as a
-            // "hide almost everything" signal during normal next/prev feed navigation.
-            state.isTikTokNavigating = isTransitioning && !isInteracting();
+            // Unify next/previous behavior: while the user is actively navigating, preserve the last
+            // stable social controls instead of collapsing and re-expanding them mid-transition.
+            state.isTikTokNavigating = isTransitioning && !isUserDrivenTransition;
 
             document.dispatchEvent(new CustomEvent('TikTok_State_Update', { detail: state }));
         },
@@ -250,6 +281,7 @@
             [ACTIONS.TOGGLE_LIKE]: (video) => { getLikeButton(video)?.click(); return { handled: true }; },
             [ACTIONS.TOGGLE_FAVORITE]: (video) => { getFavoriteButton(video)?.click(); return { handled: true }; },
             [ACTIONS.NAVIGATE_VIDEO]: (video, msg) => {
+                manualNavUiGraceUntil = Date.now() + MANUAL_NAV_UI_GRACE_MS;
                 signalInteraction();
                 const key = msg.direction === 'next' ? 'ArrowDown' : 'ArrowUp';
                 const eventOptions = { key, code: key, keyCode: msg.direction === 'next' ? 40 : 38, bubbles: true, cancelable: true, view: window };
@@ -356,7 +388,7 @@
             newBtn.addEventListener('click', () => setTimeout(baseBridge.monitorState, 250), { passive: true, signal: newController.signal });
             const newObserver = new MutationObserver(() => baseBridge.monitorState());
             const observeOpts = isLike ? { attributes: true, attributeFilter: ['aria-pressed', 'class'] }
-                                       : { attributes: true, attributeFilter: ['class', 'style', 'fill'], subtree: true, childList: true };
+                : { attributes: true, attributeFilter: ['class', 'style', 'fill'], subtree: true, childList: true };
             newObserver.observe(newBtn, observeOpts);
             if (isLike) { likeBtnObserver = newObserver; likeClickController = newController; }
             else { favBtnObserver = newObserver; favClickController = newController; }
@@ -364,7 +396,7 @@
             if (isLike) { likeBtnObserver = null; likeClickController = null; }
             else { favBtnObserver = null; favClickController = null; }
         }
-        if (newBtn) baseBridge.monitorState();
+        baseBridge.monitorState();
         return newBtn;
     }
 
@@ -387,13 +419,17 @@
         if (!rootObserver) {
             rootObserver = new MutationObserver(() => {
                 if (rootDebounceTimer) return;
-                rootDebounceTimer = setTimeout(() => { rootDebounceTimer = null; monitorInteractiveElements(); }, 300);
+                rootDebounceTimer = setTimeout(() => {
+                    rootDebounceTimer = null;
+                    monitorInteractiveElements();
+                    baseBridge.monitorState(null, true);
+                }, 300);
             });
         }
         const pipVideo = document.pictureInPictureElement || getActiveVideo();
         const item = pipVideo ? getTikTokItem(pipVideo) : null;
         const observeTarget = item?.parentElement || item || document.body;
-        try { rootObserver.observe(observeTarget, { childList: true, subtree: true }); } catch (e) {}
+        try { rootObserver.observe(observeTarget, { childList: true, subtree: true }); } catch (e) { }
     }
 
     function disconnectStructuralObservers() {
