@@ -849,7 +849,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // If PiP is NOT active, we don't need to do anything or log anything for every tab update.
     if (!currentState.active) return;
 
-    // A page reload naturally removes our panel, so we stop tracking it for cleanup
+    // A page reload naturally removes our panel, so we stop tracking it for cleanup.
     _activeSessionTabIds.delete(tabId);
 
     log.info('Tab updated/reloaded:', tabId);
@@ -860,31 +860,28 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         return;
     }
 
-    const isNavigationGrace = tabId === _navigationGraceTabId;
+    // Consolidate into a single flag, updated eagerly so the validation block always sees truth.
+    let graceActive = tabId === _navigationGraceTabId;
 
-    // For same-origin SPA navigations (e.g. TikTok comments toggle changing URL),
-    // start a grace period automatically. The SIGNAL_NAVIGATION message from the
-    // content script may arrive after onUpdated fires due to async timing.
-    if (!isNavigationGrace && tabId === currentState.tabId && changeInfo.url) {
+    // For same-origin SPA navigations (e.g. Instagram Reel URL change, TikTok comment toggle),
+    // start a grace period automatically if one isn't already running.
+    // IMPORTANT: Also set graceActive=true immediately so the check below sees it,
+    // even though startNavigationGrace is async-adjacent.
+    if (!graceActive && tabId === currentState.tabId && changeInfo.url) {
         try {
             const oldDomain = currentState.originDomain;
             const newDomain = getBaseDomain(new URL(tab.url).hostname);
             if (oldDomain && oldDomain === newDomain) {
-                log.info('Same-domain SPA URL change detected. Starting grace period.');
+                log.info('Same-domain SPA URL change detected. Starting grace period and skipping validation.');
                 startNavigationGrace(tabId, NAVIGATION_GRACE_SIGNAL_MS);
+                graceActive = true;
             }
         } catch (e) {}
     }
 
-    const isGracePeriodActive = tabId === _navigationGraceTabId;
-
-    // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check)
-    if (tabId === currentState.tabId) {
-        if (isNavigationGrace || isGracePeriodActive) {
-            log.info('Origin tab updated during navigation grace period. Skipping validation.');
-            return;
-        }
-
+    // 2. If this was the PiP origin tab, validate it still exists (SPA vs Reload check).
+    // If in a grace period, skip validation and fall through to panel re-injection below.
+    if (tabId === currentState.tabId && !graceActive) {
         log.info('Origin tab updated. Validating PiP...');
         const isValid = await validateTabPipStatus(tabId, tab.url);
 
@@ -897,7 +894,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         log.info('PiP survived update.');
     }
 
-    // 3. If PiP is active, inject/show the control panel in this tab
+    // 3. If PiP is active, inject/show the control panel in this tab.
+    // This also serves as the post-grace re-injection for the origin tab after a Reel URL change.
     if (currentState.active) {
         const success = await injectControlPanel(tabId, tab.url);
         if (success) {
@@ -907,6 +905,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         }
     }
 });
+
 
 // Listen for keyboard commands
 chrome.commands.onCommand.addListener(async (command) => {

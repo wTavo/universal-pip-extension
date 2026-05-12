@@ -6,6 +6,7 @@
 
     let currentLiked = false;
     let currentFavorited = false;
+    let currentSupportsNavigation = false;
 
     // --- PiP State Listeners (Shared) ---
     if (window.PiPUtils && window.PiPUtils.trackPiPState) {
@@ -22,7 +23,7 @@
 
                 return {
                     platform: 'instagram',
-                    supportsNavigation: window.location.pathname.includes('/reels/') || window.location.pathname === '/',
+                    supportsNavigation: currentSupportsNavigation,
                     // Detect if PiP was triggered by the selector ball (pip-selector-logic.js sets this flag)
                     pipMode: (window.__pipExt && window.__pipExt.isSelector) ? 'manual' : 'main',
                     isExtensionTriggered: !!(window.__pipExt && window.__pipExt.isTriggered),
@@ -83,10 +84,11 @@
 
     // --- Bridge Communication ---
     document.addEventListener('Instagram_State_Update', (e) => {
-        const { liked, favorited, playing } = e.detail || {};
+        const { liked, favorited, playing, volume, muted, supportsNavigation, isAd } = e.detail || {};
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof favorited === 'boolean') currentFavorited = favorited;
+        if (typeof supportsNavigation === 'boolean') currentSupportsNavigation = supportsNavigation;
 
         if (window.PiPUtils && window.PiPUtils.safeSendMessage) {
             if (typeof liked === 'boolean') {
@@ -98,10 +100,15 @@
             if (typeof playing === 'boolean') {
                 window.PiPUtils.safeSendMessage({ type: 'UPDATE_PLAYBACK_STATE', playing });
             }
+            if (typeof supportsNavigation === 'boolean') {
+                window.PiPUtils.safeSendMessage({ type: 'UPDATE_NAV_SUPPORT_STATE', supportsNavigation });
+            }
+            if (typeof volume === 'number' || typeof muted === 'boolean') {
+                window.PiPUtils.safeSendMessage({ type: 'UPDATE_VOLUME_STATE', volume, muted });
+            }
+            if (typeof isAd === 'boolean') {
+                window.PiPUtils.safeSendMessage({ type: 'UPDATE_AD_STATE', isAd });
+            }
         }
     });
-
-
-
-
 })();
