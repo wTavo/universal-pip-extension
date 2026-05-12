@@ -64,7 +64,7 @@
         } catch (e) {}
 
         if (_navTimer) clearTimeout(_navTimer);
-        _navTimer = setTimeout(clearNavigation, 0);
+        _navTimer = setTimeout(clearNavigation, 800);
     }
 
     function signalInteraction() {
@@ -310,8 +310,11 @@
 
     window.addEventListener('resize', refreshActiveVideo);
 
-    function getClosestCandidate(video, candidates) {
+    function getClosestCandidate(video, candidates, options = {}) {
         if (!video || !candidates || candidates.length === 0) return null;
+
+        const maxMultiplier = options.maxMultiplier || 2.25;
+        const checkVisibility = options.checkVisibility;
 
         let closestBtn = null;
         let closestDistanceSq = Infinity;
@@ -324,12 +327,11 @@
             // IGNORE extension UI to prevent feedback loops
             if (candidate.hasAttribute?.('data-pip-managed')) continue;
 
-            const btn =
-                candidate.tagName === 'BUTTON'
-                    ? candidate
-                    : candidate.closest('button');
+            const btn = normalizeToButton(candidate);
 
             if (!btn || btn.hasAttribute('data-pip-managed')) continue;
+
+            if (checkVisibility && (!checkVisibility(candidate) || !checkVisibility(btn))) continue;
 
             const rect = btn.getBoundingClientRect();
 
@@ -349,7 +351,7 @@
         }
 
         const maxDistanceSq =
-            Math.max(videoRect.height, videoRect.width) ** 2 * 2.25;
+            Math.max(videoRect.height, videoRect.width) ** 2 * maxMultiplier;
 
         if (closestDistanceSq < maxDistanceSq) {
             return closestBtn;
@@ -655,7 +657,8 @@
     function normalizeToButton(node) {
         if (!node) return null;
         if (node.tagName && node.tagName.toLowerCase() === 'button') return node;
-        const btn = node.closest ? node.closest('button') : null;
+        if (node.getAttribute && node.getAttribute('role') === 'button') return node;
+        const btn = node.closest ? node.closest('button, [role="button"]') : null;
         return btn || node;
     }
 
@@ -756,6 +759,7 @@
      * @param {Function} opts.getLikeStatus - (video) => boolean
      * @param {Function} opts.getFavoriteStatus - (video) => boolean
      * @param {Function} opts.detectIsLive - (video) => boolean
+     * @param {Function} opts.extendState - (state, video) => object
      * @param {Function} opts.onStateChange - (state) => void
      * @returns {Function} monitorState function
      */
@@ -780,6 +784,10 @@
                 favorited: opts.getFavoriteStatus ? opts.getFavoriteStatus(targetVideo) : false,
                 isLive: opts.detectIsLive ? opts.detectIsLive(targetVideo) : false
             };
+
+            if (opts.extendState) {
+                Object.assign(state, opts.extendState(state, targetVideo) || {});
+            }
 
             if (!forceBroadcast && lastState && Object.keys(state).every(k => state[k] === lastState[k])) return;
 
@@ -808,6 +816,7 @@
             getLikeStatus,
             getFavoriteStatus,
             detectIsLive,
+            extendState,
             findMuteBtn = () => null,
             getPlayer = () => null,
             supportedActions = {}
@@ -819,6 +828,7 @@
             getLikeStatus,
             getFavoriteStatus,
             detectIsLive,
+            extendState,
             onStateChange
         });
 

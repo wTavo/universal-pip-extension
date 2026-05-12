@@ -281,11 +281,52 @@
         if (likeBtn) likeBtn.style.display = (isAd && isShorts) ? 'none' : 'flex';
     }
 
+    function applyInstagramDynamicControls(source = {}) {
+        if (!STATE.contentControlsReady) {
+            hideDeferredControls();
+            return;
+        }
+
+        const isAd = !!source.isAd;
+
+        const likeBtn = targetDoc.getElementById('globalPipNavContainer_like');
+        const favBtn = targetDoc.getElementById('globalPipNavContainer_favorite');
+        if (likeBtn) likeBtn.style.display = isAd ? 'none' : 'flex';
+        if (favBtn) favBtn.style.display = isAd ? 'none' : 'flex';
+
+        const seekRow = targetDoc.getElementById('pipSeekButtonsRow');
+        const seekSep = targetDoc.getElementById('pipSeekSeparator');
+        if (seekRow) seekRow.style.display = isAd ? 'none' : 'flex';
+        if (seekSep) seekSep.style.display = isAd ? 'none' : 'block';
+
+        targetDoc.querySelectorAll('.pip-separator').forEach(separator => {
+            separator.style.display = isAd ? 'none' : 'block';
+        });
+
+        const navContainer = targetDoc.getElementById("globalPipNavContainer");
+        if (navContainer && !STATE.isSelectorMode) {
+            navContainer.style.display = "flex";
+        }
+
+        if (!isAd && !STATE.isSelectorMode) {
+            const arcBtn = targetDoc.getElementById("pipNavCollapseBtn");
+            const wrapper = targetDoc.getElementById("pipNavButtonsWrapper");
+            STATE.isNavExpanded = true;
+            if (arcBtn) window.PiPVolumePanelUI.updateNavCollapse(arcBtn, true);
+            if (wrapper) {
+                wrapper.style.display = "flex";
+                wrapper.style.opacity = "1";
+            }
+        }
+    }
+
     function applyPlatformDynamicControls(source = {}) {
         if (source.platform === 'tiktok') {
             applyTikTokDynamicControls(source);
         } else if (source.platform === 'youtube') {
             applyYouTubeDynamicControls(source);
+        } else if (source.platform === 'instagram') {
+            applyInstagramDynamicControls(source);
         }
     }
 
@@ -424,6 +465,12 @@
             markContentControlsReady();
             mergePipState({ playing: m.playing ?? true });
             UTILS.dispatchSync("pip-playback-sync", { playing: m.playing ?? true });
+            r({ success: true });
+        },
+        SYNC_NAV_SUPPORT_UI: (m, r) => {
+            markContentControlsReady();
+            const state = mergePipState({ supportsNavigation: !!m.supportsNavigation });
+            showToggleButton(state);
             r({ success: true });
         },
         SYNC_AD_UI: (m, r) => {
@@ -782,7 +829,7 @@
         const isTikTokNavigating = !!state.isTikTokNavigating;
         const isTikTok = state.platform === 'tiktok';
 
-        if (isTikTok || state.platform === 'youtube') {
+        if (isTikTok || state.platform === 'youtube' || state.platform === 'instagram') {
             applyPlatformDynamicControls(state);
         } else {
             const seekRow = targetDoc.getElementById("pipSeekButtonsRow");
@@ -825,7 +872,8 @@
         const needsRebuild = navContainer && (
             navContainer.getAttribute('data-platform') !== currentPlatform ||
             navContainer.getAttribute('data-is-shorts') !== String(currentIsShorts) ||
-            navContainer.getAttribute('data-is-selector') !== String(currentIsSelector)
+            navContainer.getAttribute('data-is-selector') !== String(currentIsSelector) ||
+            navContainer.getAttribute('data-supports-nav') !== String(currentSupportsNav)
         );
 
         if (needsRebuild) {

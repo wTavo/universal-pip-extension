@@ -430,15 +430,16 @@
                         return;
                     }
 
-                    const isManualExit = video && video.isConnected;
                     const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
                                        document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
 
-                    if (isNavigating && !isManualExit) {
+                    if (isNavigating) {
                         log.info('Natural navigation exit detected - suppressing PiP deactivation signal.');
                         return;
                     }
 
+                    const isManualExit = video && video.isConnected;
+                    
                     window.PiPUtils.notifyPipClosed({ force: isManualExit, hidePanel: false });
 
                     if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
@@ -462,11 +463,19 @@
                     sendResponse({ success: true });
                 } else if (message.type === 'VALIDATE_PIP_STATUS') {
                     const video = document.pictureInPictureElement;
-                    const isActive = !!video;
+                    let isActive = !!video;
+                    
+                    const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
+                                       document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
+                                       
+                    if (isNavigating) {
+                        isActive = true;
+                    }
+
                     let metadata = {};
                     if (isActive && window.PiPUtils._metadataCollector) {
                         try {
-                            metadata = window.PiPUtils._metadataCollector(video);
+                            metadata = window.PiPUtils._metadataCollector(video || document.querySelector('video'));
                         } catch (e) { }
                     }
                     sendResponse({ success: true, isActive: isActive, metadata: metadata });
