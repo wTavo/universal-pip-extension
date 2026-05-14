@@ -47,14 +47,12 @@
             'SEEK_VIDEO': (msg) => ({ action: 'SEEK', value: msg.offset }),
             'LIKE_VIDEO': () => ({ action: 'TOGGLE_LIKE' }),
             'FAVORITE_VIDEO': () => ({ action: 'TOGGLE_FAVORITE' }),
-            'NAVIGATE_VIDEO': (msg) => {
-                window.__pipIgnoreNextPopstate = true;
-                setTimeout(() => { window.__pipIgnoreNextPopstate = false; }, 1000);
-                return { action: 'NAVIGATE_VIDEO', direction: msg.direction };
-            },
+            'NAVIGATE_VIDEO': window.PiPUtils.createNavigateRelay(),
             'TOGGLE_PLAY': () => ({ action: 'TOGGLE_PLAY' }),
             'EXIT_PIP': () => ({ action: 'EXIT_PIP' }),
-            'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' })
+            'FOCUS_PIP': () => ({ action: 'FOCUS_PIP' }),
+            'PAUSE_VIDEO': () => ({ action: 'PAUSE' }),
+            'HIDE_VOLUME_PANEL': () => { /* icon update handled globally */ }
         });
     }
 
@@ -84,7 +82,14 @@
 
     // --- Bridge Communication ---
     document.addEventListener('Instagram_State_Update', (e) => {
-        const { liked, favorited, playing, volume, muted, supportsNavigation, isAd } = e.detail || {};
+        let { liked, favorited, playing, volume, muted, supportsNavigation, isAd } = e.detail || {};
+        const recentPipNavigation = Date.now() - (window.PiPUtils?._lastPipNavigationAt || 0) < 3500;
+        if (recentPipNavigation && currentSupportsNavigation && supportsNavigation === false) {
+            supportsNavigation = undefined;
+        }
+        if (recentPipNavigation && isAd === true) {
+            isAd = undefined;
+        }
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof favorited === 'boolean') currentFavorited = favorited;

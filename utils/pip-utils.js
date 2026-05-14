@@ -15,6 +15,7 @@
         PROCESSED_ATTR: 'data-pip-processed',
         NAVIGATING_ATTR: 'data-pip-navigating'
     };
+    const RECENT_PIP_NAVIGATION_MS = 3500;
 
     // Unified Message Types from constants.js
     const { MSG } = window.PIP_CONSTANTS || { MSG: {} };
@@ -395,6 +396,7 @@
                 // TikTok and other SPAs use history changes for in-page UI such as comment drawers.
                 // A popstate by itself is not proof that PiP ended, so mark navigation and let the
                 // native leavepictureinpicture/background validation paths handle real exits.
+                window.PiPUtils._lastPipNavigationAt = Date.now();
                 window.PiPUtils.safeSendMessage({ type: 'SIGNAL_NAVIGATION' });
             };
 
@@ -432,8 +434,9 @@
 
                     const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
                                        document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
+                    const recentlyNavigated = Date.now() - (window.PiPUtils._lastPipNavigationAt || 0) < RECENT_PIP_NAVIGATION_MS;
 
-                    if (isNavigating) {
+                    if (isNavigating || recentlyNavigated) {
                         log.info('Natural navigation exit detected - suppressing PiP deactivation signal.');
                         return;
                     }
@@ -443,7 +446,7 @@
                     window.PiPUtils.notifyPipClosed({ force: isManualExit, hidePanel: false });
 
                     if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
-                }, 100);
+                }, 700);
             }, true);
         },
 
@@ -622,6 +625,7 @@
     });
 
     window.addEventListener('PIP_NAVIGATING', () => {
+        window.PiPUtils._lastPipNavigationAt = Date.now();
         window.PiPUtils.safeSendMessage({ type: 'SIGNAL_NAVIGATION' });
     });
 

@@ -413,7 +413,13 @@
             }
 
             STATE._destroyed = false;
-            resetContentControls();
+            const sameActivePlatform = STATE.isPipActive &&
+                STATE.contentControlsReady &&
+                STATE.pipState?.platform &&
+                STATE.pipState.platform === state.platform;
+            if (!sameActivePlatform) {
+                resetContentControls();
+            }
             // Sync selector mode from state
             STATE.isSelectorMode = state.pipMode === 'manual' || !!state.isSelectorMode;
             showToggleButton(state);
@@ -867,7 +873,12 @@
         let navContainer = targetDoc.getElementById(navContainerId);
         const currentPlatform = state.platform || 'unknown';
         const currentIsShorts = !!state.isShorts;
-        const currentSupportsNav = !!state.supportsNavigation;
+        const recentPipNavigation = Date.now() - (window.PiPUtils?._lastPipNavigationAt || 0) < 3500;
+        const preserveInstagramNav = currentPlatform === 'instagram' &&
+            recentPipNavigation &&
+            navContainer?.getAttribute('data-supports-nav') === 'true' &&
+            state.supportsNavigation === false;
+        const currentSupportsNav = preserveInstagramNav ? true : !!state.supportsNavigation;
         const currentIsSelector = !!(state.pipMode === 'manual' || state.isSelectorMode);
         const needsRebuild = navContainer && (
             navContainer.getAttribute('data-platform') !== currentPlatform ||

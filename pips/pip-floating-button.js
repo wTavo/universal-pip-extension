@@ -95,11 +95,16 @@
                 this._refreshManagedIcons(isActive);
             };
 
+            const isRecentPipNavigation = () => (
+                Date.now() - (window.PiPUtils?._lastPipNavigationAt || 0) < 3500
+            );
+
             const _onMsg = (msg) => {
                 const { MSG } = window.PIP_CONSTANTS || {};
                 if (msg.type === MSG?.PIP_ACTIVATED || msg.type === MSG?.PIP_SESSION_STARTED) {
                     syncLocalPipState(true);
                 } else if (msg.type === MSG?.HIDE_VOLUME_PANEL || msg.type === MSG?.PIP_DEACTIVATED) {
+                    if (isRecentPipNavigation()) return;
                     syncLocalPipState(false);
                 }
             };
@@ -112,10 +117,11 @@
 
             document.addEventListener('leavepictureinpicture', () => {
                 setTimeout(() => {
-                    if (!document.pictureInPictureElement) {
+                    const isNavigating = document.documentElement.hasAttribute('data-pip-navigating');
+                    if (!document.pictureInPictureElement && !isNavigating && !isRecentPipNavigation()) {
                         syncLocalPipState(false);
                     }
-                }, 100);
+                }, 700);
             }, true);
 
             // Initial sync

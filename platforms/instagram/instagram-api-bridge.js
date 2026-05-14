@@ -30,13 +30,43 @@
     let desiredVolume = null;
     let restoringAudio = false;
     let isUserIntendedPause = false;
-    let lastHiddenTime = 0;
+    let _pendingAdReset = false;
+
+    // Method override state (declared early so visibilitychange watchdog can reference them)
+    let _originalPause = null;
+    let _originalPlay = null;
+    let _overriddenVideo = null;
+    let _playbackWatchdog = null;
+    let navigationAttemptSeq = 0;
+    let activeNavigationToken = 0;
 
     document.addEventListener("visibilitychange", () => {
-        if (document.hidden) {
-            lastHiddenTime = Date.now();
-        } else {
+        if (!document.hidden) {
+            // Tab became visible again — clear watchdog, ad-reset flag, and cleanup
+            _pendingAdReset = false;
+            if (_playbackWatchdog) { clearInterval(_playbackWatchdog); _playbackWatchdog = null; }
             document.querySelectorAll('video[data-navigating-away]').forEach(v => v.removeAttribute('data-navigating-away'));
+        } else {
+            // Tab became hidden — start watchdog to keep PiP video alive
+            const pipVideo = document.pictureInPictureElement;
+            if (pipVideo && !isUserIntendedPause) {
+                let attempts = 0;
+                if (_playbackWatchdog) clearInterval(_playbackWatchdog);
+                _playbackWatchdog = setInterval(() => {
+                    attempts++;
+                    const v = document.pictureInPictureElement;
+                    if (!v || isUserIntendedPause || !document.hidden || attempts > 30) {
+                        clearInterval(_playbackWatchdog);
+                        _playbackWatchdog = null;
+                        return;
+                    }
+                    if (v.paused) {
+                        // Use original play to bypass our own override
+                        const playFn = (_originalPlay && v === _overriddenVideo) ? _originalPlay : v.play.bind(v);
+                        playFn().catch(() => { });
+                    }
+                }, 150);
+            }
         }
     }, true);
 
@@ -215,8 +245,9 @@
 
     function getReelsNavButtons(video) {
         const root = document;
-        const prev = getClosestInteractiveCandidate(video, getActionSvgs(root).filter(isInstagramPrevSvg));
-        const next = getClosestInteractiveCandidate(video, getActionSvgs(root).filter(isInstagramNextSvg));
+        const allNavSvgs = getActionSvgs(root);
+        const prev = getClosestInteractiveCandidate(video, allNavSvgs.filter(isInstagramPrevSvg));
+        const next = getClosestInteractiveCandidate(video, allNavSvgs.filter(isInstagramNextSvg));
         return { prev, next };
     }
 
@@ -263,6 +294,12 @@
     function syncAfterVideoSwitch(newVideo, skipBroadcast = false) {
         lastScanTs = 0;
 
+        // Navigation sets isUserIntendedPause=true to silence the OLD video.
+        // Now that we've switched, the user wants the NEW video to play.
+        isUserIntendedPause = false;
+        newVideo?.removeAttribute?.('data-target-video');
+        newVideo?.removeAttribute?.('data-navigating-away');
+
         if (!skipBroadcast) {
             document.dispatchEvent(new CustomEvent('Instagram_State_Update', {
                 detail: { isAd: false }
@@ -273,6 +310,7 @@
         connectStructuralObservers();
         desiredMuted = newVideo ? !!newVideo.muted : desiredMuted;
         desiredVolume = newVideo && Number.isFinite(newVideo.volume) ? newVideo.volume : desiredVolume;
+        installPauseOverride(newVideo);
         monitorInteractiveElements();
 
         if (!skipBroadcast) {
@@ -289,13 +327,97 @@
         }
     }
 
-    function switchToVisibleVideoAfterNavigation(attempt = 0) {
+    function playBypassingOverride(video) {
+        if (!video) return;
+        const playFn = (_originalPlay && video === _overriddenVideo) ? _originalPlay : video.play.bind(video);
+        playFn().catch(() => { });
+    }
+
+    function beginNavigationAttempt() {
+        navigationAttemptSeq += 1;
+        activeNavigationToken = navigationAttemptSeq;
+        return activeNavigationToken;
+    }
+
+    function finishNavigationAttempt(token) {
+        if (token === activeNavigationToken) activeNavigationToken = 0;
+    }
+
+    function finishActiveNavigationAttempt() {
+        activeNavigationToken = 0;
+    }
+
+    function isNavigationAttemptActive(token) {
+        return token && token === activeNavigationToken;
+    }
+
+    function pauseForNavigation(video) {
+        if (!video) return;
+        isUserIntendedPause = true;
+        video.setAttribute('data-navigating-away', 'true');
+        video.muted = true;
+        const pauseFn = (_originalPause && video === _overriddenVideo) ? _originalPause : video.pause.bind(video);
+        pauseFn();
+    }
+
+    function restoreAfterFailedNavigation(video) {
+        const pip = video || document.pictureInPictureElement;
+        isUserIntendedPause = false;
+        _pendingAdReset = false;
+        if (!pip) return;
+        pip.removeAttribute('data-navigating-away');
+        pip.removeAttribute('data-target-video');
+        if (desiredMuted !== null) pip.muted = desiredMuted;
+        if (desiredVolume !== null && Number.isFinite(desiredVolume)) pip.volume = desiredVolume;
+        if (pip.paused) playBypassingOverride(pip);
+        if (document.pictureInPictureElement && document.pictureInPictureElement !== pip && pip.isConnected) {
+            pip.requestPictureInPicture()
+                .then(() => {
+                    installPauseOverride(pip);
+                    baseBridge.monitorState(null, true);
+                })
+                .catch(() => { });
+        }
+    }
+
+    function scheduleNavigationRecovery(previousVideo, token, timeout = 2600) {
+        if (!previousVideo || !token) return;
+        setTimeout(() => {
+            if (!isNavigationAttemptActive(token)) return;
+
+            const pip = document.pictureInPictureElement;
+            const switchDidNotHappen = !pip || pip === previousVideo;
+            if (switchDidNotHappen || previousVideo.hasAttribute('data-navigating-away') || previousVideo.paused) {
+                finishNavigationAttempt(token);
+                restoreAfterFailedNavigation(previousVideo);
+                baseBridge.monitorState(null, true);
+            }
+        }, timeout);
+    }
+
+    function switchToVisibleVideoAfterNavigation(previousVideo, token, attempt = 0) {
+        if (!isNavigationAttemptActive(token)) return;
+
         const video = getVisibleNonPiPVideo();
         if (video) {
-            switchToVideo(video, (v) => syncAfterVideoSwitch(v, true));
+            if (previousVideo && previousVideo !== video) pauseForNavigation(previousVideo);
+            video.setAttribute('data-target-video', 'true');
+            scheduleNavigationRecovery(previousVideo, token);
+            switchToVideo(video, (v) => {
+                finishNavigationAttempt(token);
+                syncAfterVideoSwitch(v, true);
+            });
             return;
         }
-        if (attempt < 8) setTimeout(() => switchToVisibleVideoAfterNavigation(attempt + 1), 120);
+        if (attempt < 30) {
+            setTimeout(() => switchToVisibleVideoAfterNavigation(previousVideo, token, attempt + 1), 150);
+        } else {
+            // No target video appeared — navigation had no effect (e.g. prev on the first Reel).
+            // Restore state so the user isn't left with a permanently paused video.
+            finishNavigationAttempt(token);
+            restoreAfterFailedNavigation(previousVideo);
+            baseBridge.monitorState(null, true);
+        }
     }
 
     function getButtonSvg(btn) {
@@ -327,11 +449,20 @@
     }
 
     function getDynamicState(video) {
-        const likeBtn = getLikeButton(video);
-        const favBtn = getFavoriteButton(video);
+        const container = getActiveContainer(video);
+        const svgs = container ? Array.from(container.querySelectorAll(SELECTORS.ACTION_SVG)) : [];
+        const likeSvg = svgs.find(isInstagramHeartSvg);
+        const favSvg = svgs.find(isInstagramBookmarkSvg);
+        const likeBtn = likeSvg ? (likeSvg.closest('[role="button"]') || likeSvg) : null;
+        const favBtn = favSvg ? (favSvg.closest('[role="button"]') || favSvg) : null;
 
         let isAd = false;
-        if (likeBtn && !favBtn) {
+        if (_pendingAdReset) {
+            // Tab is hidden: React's DOM is frozen so favBtn may still be absent from the
+            // previous ad Reel. Suppress isAd=true until favBtn appears (real DOM is ready).
+            if (favBtn) _pendingAdReset = false;
+            // isAd stays false either way — new Reel is not an ad
+        } else if (likeBtn && !favBtn) {
             isAd = true;
         }
 
@@ -345,7 +476,7 @@
 
         return {
             supportsNavigation: hasReelsNavigation(video),
-            isAd: isAd,
+            isAd,
             isPaused: domPaused !== null ? domPaused : video.paused
         };
     }
@@ -405,39 +536,35 @@
         extendState: (_state, video) => getDynamicState(video),
         findMuteBtn: () => null,
         onStateChange: (state) => {
+            if (isNavigationAttemptActive(activeNavigationToken)) return;
             const video = document.pictureInPictureElement || getCurrentVideo();
             rememberAudioPreference(video);
             restoreAudioIfNeeded(video);
             document.dispatchEvent(new CustomEvent('Instagram_State_Update', { detail: state }));
         },
         supportedActions: {
-            [ACTIONS.PLAY_VIDEO]: (video) => {
-                isUserIntendedPause = false;
-                // Only poke the DOM overlay if visible. Poking it when hidden wakes up React
-                // and triggers its malicious background pause safeguards.
-                if (!document.hidden) {
-                    const overlay = getPlayPauseOverlay(video);
-                    if (isDomPaused(overlay) === true) clickButton(overlay.querySelector('[role="button"]') || overlay);
-                }
-                video.play().catch(() => { });
-                return { handled: true };
-            },
-            [ACTIONS.PAUSE_VIDEO]: (video) => {
-                isUserIntendedPause = true;
-                if (!document.hidden) {
-                    const overlay = getPlayPauseOverlay(video);
-                    if (isDomPaused(overlay) === false) clickButton(overlay.querySelector('[role="button"]') || overlay);
-                }
-                video.pause();
-                return { handled: true };
-            },
             [ACTIONS.TOGGLE_PLAY]: (video) => {
-                isUserIntendedPause = !video.paused;
+                const wantPause = !video.paused;
+                isUserIntendedPause = wantPause;
+
                 if (!document.hidden) {
                     const overlay = getPlayPauseOverlay(video);
-                    if (video.paused && isDomPaused(overlay) === true) clickButton(overlay.querySelector('[role="button"]') || overlay);
-                    else if (!video.paused && isDomPaused(overlay) === false) clickButton(overlay.querySelector('[role="button"]') || overlay);
+                    const overlayBtn = overlay ? (overlay.querySelector('[role="button"]') || overlay) : null;
+                    if (overlayBtn) {
+                        // CRITICAL: Use ONLY the overlay click — do NOT also call video.pause/play.
+                        // Instagram's React processes the overlay click asynchronously. If we also
+                        // call video.pause() synchronously, React sees the video is already paused
+                        // when it processes the click and re-toggles it back to play.
+                        const domState = isDomPaused(overlay);
+                        if ((wantPause && domState === false) || (!wantPause && domState === true)) {
+                            clickButton(overlayBtn);
+                            return { handled: true };
+                        }
+                        // domState is null or inconsistent with video.paused (e.g. after navigation).
+                        // Fall through to direct manipulation as a safe fallback.
+                    }
                 }
+                // Fallback: no overlay, hidden tab, or inconsistent overlay state → direct manipulation
                 if (video.paused) video.play().catch(() => { });
                 else video.pause();
                 return { handled: true };
@@ -481,15 +608,19 @@
                 return { handled: true };
             },
             [ACTIONS.NAVIGATE_VIDEO]: (video, msg) => {
-                if (signalNavigation) signalNavigation();
-                instagramLastNavTime = Date.now();
+                if (isNavigationAttemptActive(activeNavigationToken)) {
+                    return { handled: true };
+                }
 
-                // Mute/Pause the old video BEFORE navigating to prevent audio leaks.
-                // We permanently tag it so our anti-pause completely ignores it.
-                isUserIntendedPause = true;
-                video.setAttribute('data-navigating-away', 'true');
-                video.muted = true;
-                video.pause();
+                if (signalNavigation) signalNavigation();
+                const navToken = beginNavigationAttempt();
+
+                // If the current video is an ad, the next Reel's DOM may not be fully rendered
+                // yet when the tab is hidden (React freezes updates). Set a flag so getDynamicState
+                // skips the stale DOM check and immediately reports isAd=false for the next broadcast.
+                if (document.hidden && getDynamicState(video).isAd) {
+                    _pendingAdReset = true;
+                }
 
                 const nav = getReelsNavButtons(video);
                 const btn = msg.direction === 'next' ? nav.next : nav.prev;
@@ -497,48 +628,23 @@
 
                 const targetVideo = msg.direction === 'next' ? getNextVideo(video) : getPrevVideo(video);
                 if (targetVideo) {
+                    pauseForNavigation(video);
                     // Tag the new video for immediate anti-pause protection before PiP attaches
                     targetVideo.setAttribute('data-target-video', 'true');
 
                     const doSwitch = async () => {
-                        // Secure the PiP session by transferring it to an invisible anchor.
-                        // This prevents Chrome from killing the session when React unmounts the old video during scroll.
-                        let dummyAnchor = null;
-                        if (document.pictureInPictureElement) {
-                            try {
-                                const canvas = document.createElement('canvas');
-                                canvas.width = 1; canvas.height = 1;
-                                dummyAnchor = document.createElement('video');
-                                dummyAnchor.muted = true;
-                                dummyAnchor.autoplay = true;
-                                dummyAnchor.style.position = 'absolute';
-                                dummyAnchor.style.opacity = '0';
-                                dummyAnchor.srcObject = canvas.captureStream();
-                                document.body.appendChild(dummyAnchor);
-
-                                await dummyAnchor.play();
-                                await dummyAnchor.requestPictureInPicture();
-                            } catch (e) {
-                                if (dummyAnchor && dummyAnchor.parentNode) dummyAnchor.remove();
-                            }
-                        }
-
                         switchToVideo(targetVideo, (v) => {
+                            finishNavigationAttempt(navToken);
                             syncAfterVideoSwitch(v, true);
-                            if (dummyAnchor && dummyAnchor.parentNode) dummyAnchor.remove();
                         });
 
                         targetVideo.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-                        // Cleanup failsafe
-                        setTimeout(() => {
-                            if (dummyAnchor && dummyAnchor.parentNode) dummyAnchor.remove();
-                        }, 3000);
                     };
 
+                    scheduleNavigationRecovery(video, navToken);
                     doSwitch();
                 } else {
-                    switchToVisibleVideoAfterNavigation();
+                    switchToVisibleVideoAfterNavigation(video, navToken);
                 }
                 return { handled: true };
             },
@@ -554,8 +660,7 @@
                 });
                 return { handled: true };
             },
-            [ACTIONS.CHECK_STATUS]: (video) => {
-                if (video) sessionCache.delete(video);
+            [ACTIONS.CHECK_STATUS]: () => {
                 monitorInteractiveElements();
                 baseBridge.monitorState(null, true);
                 return { handled: true };
@@ -563,10 +668,54 @@
         }
     });
 
-    document.addEventListener('enterpictureinpicture', () => {
-        const video = document.pictureInPictureElement;
+    // --- Method overrides for bulletproof background playback control ---
+    // Event interception (stopImmediatePropagation) is fragile because Instagram
+    // may register its pause listener BEFORE our injected script, so it fires first.
+    // By overriding pause()/play() directly on the PiP video, we block at the source.
+
+    function installPauseOverride(video) {
+        if (!video || video === _overriddenVideo) return;
+        removePauseOverride();
+
+        _originalPause = video.pause.bind(video);
+        _originalPlay = video.play.bind(video);
+        _overriddenVideo = video;
+
+        video.pause = function () {
+            if (document.hidden && !isUserIntendedPause && document.pictureInPictureElement === video) {
+                // Instagram is trying to pause the PiP video in the background — block it
+                return;
+            }
+            return _originalPause();
+        };
+
+        video.play = function () {
+            if (document.hidden && isUserIntendedPause && document.pictureInPictureElement === video) {
+                // User intentionally paused — block Instagram from auto-resuming in the background
+                return Promise.resolve();
+            }
+            return _originalPlay();
+        };
+    }
+
+    function removePauseOverride() {
+        if (_overriddenVideo) {
+            try {
+                _overriddenVideo.pause = HTMLVideoElement.prototype.pause;
+                _overriddenVideo.play = HTMLVideoElement.prototype.play;
+            } catch (e) { }
+        }
+        _originalPause = null;
+        _originalPlay = null;
+        _overriddenVideo = null;
+    }
+
+    document.addEventListener('enterpictureinpicture', (e) => {
+        const video = e.target || document.pictureInPictureElement;
+        finishActiveNavigationAttempt();
         desiredMuted = video ? !!video.muted : desiredMuted;
         desiredVolume = video && Number.isFinite(video.volume) ? video.volume : desiredVolume;
+        installPauseOverride(video);
         connectStructuralObservers();
         requestAnimationFrame(() => {
             monitorInteractiveElements();
@@ -574,8 +723,10 @@
         });
     });
 
-    document.addEventListener('leavepictureinpicture', () => {
-        baseBridge.removeVideoStateListeners(getCurrentVideo());
+    document.addEventListener('leavepictureinpicture', (e) => {
+        const video = e.target;   // capture before pictureInPictureElement becomes null
+        removePauseOverride();
+        baseBridge.removeVideoStateListeners(video);
         disconnectInteractiveObservers();
         disconnectStructuralObservers();
         desiredMuted = null;
@@ -584,6 +735,7 @@
 
     if (enableAutoSwitching) {
         enableAutoSwitching((newVideo) => {
+            finishActiveNavigationAttempt();
             syncAfterVideoSwitch(newVideo, true);
         });
     }
@@ -694,7 +846,7 @@
 
         const activeVideo = getCurrentVideo();
         // Protect both the fully attached PiP video AND the incoming target video
-        if (!activeVideo || (e.target !== activeVideo && !(e.target.hasAttribute && e.target.hasAttribute('data-target-video')))) return;
+        if (!activeVideo || (e.target !== activeVideo && !e.target.hasAttribute('data-target-video'))) return;
 
         if (document.hidden && !isUserIntendedPause) {
             // BULLETPROOF SHIELD: Instagram tries to pause the video constantly when hidden.
@@ -735,7 +887,9 @@
             navigator.mediaSession.setActionHandler('pause', () => {
                 isUserIntendedPause = true;
                 const v = getCurrentVideo();
-                if (v) v.pause();
+                // Use the original pause to bypass our override
+                if (v && _originalPause && v === _overriddenVideo) _originalPause();
+                else if (v) v.pause();
             });
             navigator.mediaSession.setActionHandler('play', () => {
                 isUserIntendedPause = false;

@@ -1,4 +1,4 @@
-﻿(() => {
+(() => {
     if (window.__YOUTUBE_PIP_BRIDGE_LOADED__) return;
     window.__YOUTUBE_PIP_BRIDGE_LOADED__ = true;
 

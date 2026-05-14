@@ -588,7 +588,8 @@ async function handlePipActivated(message, sender, sendResponse) {
         (pipState.active && pipState.tabId === newTabId && pipState.isExtensionTriggered);
 
     const originDomain = message.originDomain || getTabDomain(sender.tab);
-    clearNavigationGrace(newTabId);
+    const isSameTabVideoSwap = pipState.active && pipState.tabId === newTabId;
+    if (!isSameTabVideoSwap) clearNavigationGrace(newTabId);
 
     const newState = {
         ...DEFAULT_PIP_STATE,
@@ -715,7 +716,7 @@ async function handleUpdateTikTokLiveState(message, sender, sendResponse) {
 async function handlePipDeactivated(message, sender, sendResponse) {
     if (pipState.active) {
         const actingTabId = sender.tab?.id;
-        if (!message.force && actingTabId && actingTabId === _navigationGraceTabId) {
+        if (actingTabId && actingTabId === _navigationGraceTabId && actingTabId === pipState.tabId) {
             log.info('Ignoring PiP deactivation during grace period for tab:', actingTabId);
             return sendResponse({ success: true });
         }

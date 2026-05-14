@@ -156,7 +156,8 @@
     },
     {
       "matches": [
-        "https://www.instagram.com/*"
+        "https://www.instagram.com/*",
+        "https://*.instagram.com/*"
       ],
       "js": [
         "platforms/instagram/instagram-inject.js"
