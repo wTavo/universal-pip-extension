@@ -19,6 +19,7 @@ const DEFAULT_PIP_STATE = Object.freeze({
     playing: false,
     isLive: false,
     isAd: false,
+    canSkipAd: false,
     isTikTokLive: false,
     hasFavorite: true,
     originDomain: null,
@@ -62,7 +63,8 @@ const MSG = Object.freeze({
     CHANGE_VOLUME: 'CHANGE_VOLUME',
     PAUSE_VIDEO: 'PAUSE_VIDEO',
     FOCUS_PIP: 'FOCUS_PIP',
-    
+    SKIP_AD: 'SKIP_AD',
+
     // Commands/Actions
     LIKE_VIDEO: 'LIKE_VIDEO',
     FAVORITE_VIDEO: 'FAVORITE_VIDEO',
