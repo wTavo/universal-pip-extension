@@ -24,6 +24,7 @@ const DEFAULT_PIP_STATE = Object.freeze({
     hasFavorite: true,
     originDomain: null,
     isExtensionTriggered: false,
+    pipWindowMode: 'native',
     domainExceptions: {}
 });
 
@@ -49,6 +50,9 @@ const MSG = Object.freeze({
     GET_PIP_STATE: 'GET_PIP_STATE',
     CHECK_PIP_STATUS: 'CHECK_PIP_STATUS',
     EXIT_PIP: 'EXIT_PIP',
+    SET_PIP_WINDOW_MODE: 'SET_PIP_WINDOW_MODE',
+    SYNC_PIP_WINDOW_MODE: 'SYNC_PIP_WINDOW_MODE',
+    SWITCH_PIP_WINDOW_MODE: 'SWITCH_PIP_WINDOW_MODE',
 
     // Video Controls
     TOGGLE_PLAY: 'TOGGLE_PLAY',

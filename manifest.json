@@ -61,6 +61,7 @@
       ],
       "js": [
         "utils/constants.js",
+        "utils/pip-mode-utils.js",
         "utils/logger.js",
         "utils/ui-constants.js",
         "utils/pip-utils.js",
@@ -77,6 +78,7 @@
       ],
       "js": [
         "utils/constants.js",
+        "utils/pip-mode-utils.js",
         "utils/ui-constants.js",
         "utils/pip-utils.js",
         "volume-panel/volume-panel-ui.js",
@@ -167,10 +169,11 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "bridge-utils.js",
-        "platforms/youtube/youtube-api-bridge.js"
-      ],
+        "resources": [
+          "bridge-utils.js",
+          "platforms/youtube/youtube-document-pip-ui.js",
+          "platforms/youtube/youtube-api-bridge.js"
+        ],
       "matches": [
         "*://*.youtube.com/*"
       ]

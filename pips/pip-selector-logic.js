@@ -594,17 +594,7 @@
 
                     if (!isSupportedPlatform) {
                         const { MSG } = window.PIP_CONSTANTS;
-                    window.PiPUtils.safeSendMessage({ type: MSG.EXIT_PIP });
-                        window.PiPUtils.safeSendMessage({
-                            type: MSG.PIP_ACTIVATED,
-                            platform: 'generic',
-                            isSelectorMode: true,
-                            pipMode: "manual",
-                            isExtensionTriggered: true,
-                            volume: Math.round(targetVideo.volume * 100),
-                            muted: targetVideo.muted,
-                            playing: !targetVideo.paused
-                        });
+                        window.PiPUtils.safeSendMessage({ type: MSG.EXIT_PIP });
                     }
 
                 } catch (err) {

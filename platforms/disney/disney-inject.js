@@ -258,17 +258,7 @@
                 log.error('Error exiting PiP:', error);
             }
         }
-
-        window.PiPUtils?.safeSendMessage({ type: 'PIP_DEACTIVATED' });
     }
-
-    // Detectar cuando se sale del PiP
-    document.addEventListener('leavepictureinpicture', () => {
-        // Handled globally
-        window.PiPUtils?.safeSendMessage({
-            type: 'PIP_DEACTIVATED'
-        });
-    });
 
 
     // Escuchar comandos del background

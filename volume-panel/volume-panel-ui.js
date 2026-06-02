@@ -367,6 +367,37 @@
         },
 
         /**
+         * Updates Skip Ad button icon based on whether it's skippable or an ad is just in progress.
+         */
+        updateSkipAdStatus: (btn, isAd, canSkipAd) => {
+            if (!btn) return;
+            if (!isAd) {
+                btn.style.display = 'none';
+                return;
+            }
+            btn.style.display = 'flex';
+            btn.innerHTML = '';
+            
+            if (canSkipAd) {
+                btn.appendChild(createSVG(ICONS.skipAd));
+                btn.title = "Skip Ad";
+                btn.style.background = "linear-gradient(145deg, rgba(255, 180, 0, 0.9), rgba(200, 130, 0, 0.75))";
+                btn.style.boxShadow = "0 4px 14px rgba(255, 180, 0, 0.6)";
+                btn.style.opacity = '1';
+                btn.style.cursor = 'pointer';
+                btn.style.pointerEvents = 'auto';
+            } else {
+                btn.appendChild(createSVG(ICONS.adWait));
+                btn.title = "Ad in progress...";
+                btn.style.background = "rgba(0,0,0,0.65)";
+                btn.style.boxShadow = "0 4px 14px rgba(0,0,0,0.45)";
+                btn.style.opacity = '0.7';
+                btn.style.cursor = 'default';
+                btn.style.pointerEvents = 'none';
+            }
+        },
+
+        /**
          * Safe recursive cleanup of elements and their extension-added properties.
          */
         cleanupElement: (el) => {
@@ -552,6 +583,21 @@
             btn.title = title;
             btn.appendChild(createSVG(iconDef));
             applyBtnTheme(btn, BTN_THEMES.PREMIUM, "35px");
+            return btn;
+        },
+        buildSkipAdBtn: (doc) => {
+            const btn = createBasePipBtn(doc, 'pipSkipAdBtn', 'Skip Ad', ICONS.skipAd, null);
+            btn.style.cssText = BTN_THEMES.NAV.base;
+            btn.style.display = 'none';
+            
+            // Custom hover logic that ONLY scales, so it doesn't overwrite the dynamic background color
+            btn.addEventListener('mouseenter', () => {
+                btn.style.transform = "scale(1.1)";
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.transform = "scale(1)";
+            });
+            
             return btn;
         },
 

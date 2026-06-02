@@ -74,6 +74,12 @@
     "modalSettingsTitle": {
         "message": "Settings"
     },
+    "modalPipWindowModeLabel": {
+        "message": "Document PiP"
+    },
+    "modalPipWindowModeDesc": {
+        "message": "Use custom YouTube PiP window"
+    },
     "modalDebugModeLabel": {
         "message": "Debug Mode"
     },

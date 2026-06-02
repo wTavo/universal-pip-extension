@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalViews = document.querySelectorAll('.modal-view');
     const settingsBtn = document.getElementById('settings-toggle-btn');
     const reportBtn = document.getElementById('open-report-btn');
+    const { MSG } = window.PIP_CONSTANTS;
 
     function openModal(viewName) {
         modalViews.forEach(v => v.style.display = 'none');
@@ -38,6 +39,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Debug Mode Toggle ──────────────────────────────────────
     const debugToggle = document.getElementById('debug-mode-toggle');
+    const pipWindowModeToggle = document.getElementById('pip-window-mode-toggle');
+
+    function normalizePipWindowMode(mode) {
+        return window.PiPModeUtils?.normalizePipWindowMode
+            ? window.PiPModeUtils.normalizePipWindowMode(mode)
+            : (mode === 'document' ? 'document' : 'native');
+    }
+
+    chrome.storage.local.get(['pipWindowMode', 'pipState'], (result) => {
+        const mode = normalizePipWindowMode(result.pipWindowMode || result.pipState?.pipWindowMode);
+        if (pipWindowModeToggle) pipWindowModeToggle.checked = mode === 'document';
+    });
+
+    pipWindowModeToggle?.addEventListener('change', (e) => {
+        const mode = e.target.checked ? 'document' : 'native';
+        chrome.runtime.sendMessage({ type: MSG.SET_PIP_WINDOW_MODE, mode }, (response) => {
+            if (chrome.runtime.lastError) {
+                log.warn('PiP mode update failed:', chrome.runtime.lastError.message);
+                return;
+            }
+            e.target.checked = normalizePipWindowMode(response?.mode) === 'document';
+        });
+        e.stopPropagation();
+    });
 
     // Load current debug state
     chrome.storage.local.get(['logLevel'], (result) => {
@@ -176,7 +201,6 @@ document.addEventListener('DOMContentLoaded', () => {
             const globalBadge = document.getElementById('global-status');
             const currentBadge = document.getElementById('current-status');
 
-            const { MSG } = window.PIP_CONSTANTS;
             chrome.runtime.sendMessage({ type: MSG.GET_UI_STATE }, (response) => {
                 if (response && response.uiVisible !== undefined) {
                     if (response.uiVisible) {
@@ -190,7 +214,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
 
             if (tab && tab.id) {
-                const { MSG } = window.PIP_CONSTANTS;
                 chrome.tabs.sendMessage(tab.id, { type: MSG.GET_UI_VISIBILITY }, (response) => {
                     if (chrome.runtime.lastError) {
                         currentBadge.classList.remove('hidden');
@@ -260,7 +283,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (!chrome.runtime?.id) return;
                 const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-                const { MSG } = window.PIP_CONSTANTS;
                 if (command === 'hide_ui') {
                     const scope = hideScopeToggle.checked ? 'global' : 'platform';
                     chrome.runtime.sendMessage({

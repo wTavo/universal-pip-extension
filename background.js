@@ -133,8 +133,12 @@ async function updateAndSync(delta, syncMsg = null, relayType = null, relayPaylo
 
 // Helper para recuperar y VALIDAR estado
 async function getPipState() {
-    const data = await chrome.storage.local.get('pipState');
+    const data = await chrome.storage.local.get(['pipState', 'pipWindowMode']);
     let storedState = data.pipState || { ...DEFAULT_PIP_STATE };
+
+    if (data.pipWindowMode) {
+        storedState.pipWindowMode = data.pipWindowMode;
+    }
 
     // Si dice que está activo, verificar que la pestaña aun exista
     if (storedState.active && storedState.tabId) {
@@ -143,6 +147,9 @@ async function getPipState() {
         } catch (e) {
             log.info('Stale state detected (tab closed). Resetting.');
             storedState = { ...DEFAULT_PIP_STATE };
+            if (data.pipWindowMode) {
+                storedState.pipWindowMode = data.pipWindowMode;
+            }
             await chrome.storage.local.set({ pipState: storedState });
         }
     }
@@ -159,8 +166,13 @@ getPipState().then(state => {
 });
 
 // Listen for external storage changes to keep in-memory state synchronized
-chrome.storage.onChanged.addListener((changes, area) => {
+chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area !== 'local') return;
+
+    if (changes.pipWindowMode) {
+        pipState.pipWindowMode = changes.pipWindowMode.newValue || 'native';
+    }
+
     if (changes.pipState && changes.pipState.newValue) {
         const newState = changes.pipState.newValue;
 
@@ -171,6 +183,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
         // Merge with defaults to ensure shape consistency
         pipState = { ...DEFAULT_PIP_STATE, ...newState };
+
+        // Keep dedicated pipWindowMode priority
+        const data = await chrome.storage.local.get('pipWindowMode');
+        if (data.pipWindowMode) {
+            pipState.pipWindowMode = data.pipWindowMode;
+        }
 
         // Deep sanitize specific complex fields if necessary
         if (typeof pipState.domainExceptions !== 'object' || pipState.domainExceptions === null) {
@@ -481,8 +499,13 @@ async function performPipGlobalCleanup() {
     // 1. Broadcast HIDE to all tracked/relevant tabs
     await syncToRelevantTabs({ type: MSG.HIDE_VOLUME_PANEL });
 
-    // 2. Reset global state
-    await updateAndSync({ active: false, tabId: null });
+    // Broadcast PIP_DEACTIVATED to all tabs to update floating buttons
+    await syncToRelevantTabs({ type: MSG.PIP_DEACTIVATED });
+
+    // 2. Reset global state while preserving the user's preferred pipWindowMode
+    const data = await chrome.storage.local.get('pipWindowMode');
+    const preferredMode = data.pipWindowMode || 'native';
+    await updateAndSync({ active: false, tabId: null, pipWindowMode: preferredMode });
 
     // 3. Clear session-specific tracking
     _activeSessionTabIds.clear();
@@ -738,6 +761,34 @@ const COMMAND_HANDLERS = {
     [MSG.STOP_SELECTION_MODE_GLOBAL]: handleStopSelectionModeGlobal,
     [MSG.EXIT_PIP]: handleExitPip,
     [MSG.NAVIGATE_VIDEO]: handleNavigateVideo,
+
+    [MSG.SET_PIP_WINDOW_MODE]: async (message, sender, sendResponse) => {
+        const mode = message.mode === 'document' ? 'document' : 'native';
+        log.info('Setting PiP window mode to:', mode);
+
+        // 1. Save user preference at dedicated top-level storage key
+        await chrome.storage.local.set({ pipWindowMode: mode });
+
+        // 2. Also update in-memory state and sync to storage
+        await updateAndSync({ pipWindowMode: mode });
+
+        // 3. Broadcast / Relay to active tab if PiP is currently active
+        if (pipState.active && pipState.tabId) {
+            await safeSendMessage(pipState.tabId, { type: MSG.SWITCH_PIP_WINDOW_MODE, mode });
+        } else {
+            await syncToRelevantTabs({ type: MSG.SYNC_PIP_WINDOW_MODE, mode });
+        }
+
+        if (sendResponse) sendResponse({ success: true, mode });
+    },
+
+    [MSG.SKIP_AD]: async (message, sender, sendResponse) => {
+        log.info('Relaying SKIP_AD to active tab:', pipState.tabId);
+        if (pipState.tabId) {
+            await safeSendMessage(pipState.tabId, { type: MSG.SKIP_AD });
+        }
+        if (sendResponse) sendResponse({ success: true });
+    },
     
     // Generic State Actions
     [MSG.TOGGLE_LIKE]: (m, s, r) => handleStateAction('liked', MSG.SYNC_LIKE_UI, MSG.LIKE_VIDEO, m, s, r),
@@ -748,7 +799,17 @@ const COMMAND_HANDLERS = {
     
     [MSG.TOGGLE_PLAY]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, MSG.TOGGLE_PLAY, m, s, r),
     [MSG.UPDATE_PLAYBACK_STATE]: (m, s, r) => handleStateAction('playing', MSG.SYNC_PLAYBACK_UI, null, m, s, r),
-    [MSG.UPDATE_AD_STATE]: (m, s, r) => handleStateAction('isAd', MSG.SYNC_AD_UI, null, m, s, r),
+    [MSG.UPDATE_AD_STATE]: async (message, sender, sendResponse) => {
+        const delta = {};
+        if (message.isAd !== undefined) delta.isAd = !!message.isAd;
+        if (message.canSkipAd !== undefined) delta.canSkipAd = !!message.canSkipAd;
+
+        log.info('UPDATE_AD_STATE:', delta);
+
+        await updateAndSync(delta, { type: MSG.SYNC_AD_UI, ...delta });
+
+        if (sendResponse) sendResponse({ success: true, ...delta });
+    },
 
     [MSG.TOGGLE_MUTE]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
     [MSG.TOGGLE_MUTE_VIDEO]: (m, s, r) => handleStateAction('muted', MSG.UPDATE_MUTE_STATE, MSG.TOGGLE_MUTE_VIDEO, m, s, r),
@@ -888,7 +949,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
         if (!isValid) {
             log.warn('PiP died or reported inactive on update/reload.');
-            await updateAndSync({ active: false, tabId: null }, { type: MSG.HIDE_VOLUME_PANEL });
+            await performPipGlobalCleanup();
             return;
         }
 

@@ -44,6 +44,7 @@
         if (!targetVideo) return;
 
         const isRestricted = detectRestrictedInInject(targetVideo);
+        const isAd = detectAdInInject(targetVideo);
         currentIsLive = isRestricted;
         currentHasFavorite = !isRestricted;
         currentIsNavigating = false;
@@ -54,6 +55,8 @@
             hasFavorite: !isRestricted,
             isTikTokNavigating: false
         });
+        // Also send ad state so the panel can show/hide the ad indicator
+        window.PiPUtils?.safeSendMessage?.({ type: 'UPDATE_AD_STATE', isAd });
     }
 
     // --- PiP State Listeners (Shared) ---
@@ -105,9 +108,10 @@
     let _lastTikTokLive = null;
     let _lastHasFavorite = null;
     let _lastIsNavigating = null;
+    let _lastIsAd = null;
 
     document.addEventListener('TikTok_State_Update', (e) => {
-        const { liked, favorited, playing, isTikTokLive, hasFavorite, isTikTokNavigating } = e.detail || {};
+        const { liked, favorited, playing, isTikTokLive, hasFavorite, isTikTokNavigating, isAd } = e.detail || {};
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof favorited === 'boolean') currentFavorited = favorited;
@@ -127,6 +131,11 @@
                 _lastHasFavorite = currentHasFavorite;
                 _lastIsNavigating = currentIsNavigating;
                 send('UPDATE_TIKTOK_LIVE_STATE', { isTikTokLive: currentIsLive, hasFavorite: currentHasFavorite, isTikTokNavigating: currentIsNavigating });
+            }
+            // Propagate ad state separately so the panel can show/hide the ad indicator button
+            if (typeof isAd === 'boolean' && isAd !== _lastIsAd) {
+                _lastIsAd = isAd;
+                send('UPDATE_AD_STATE', { isAd });
             }
         }
     });

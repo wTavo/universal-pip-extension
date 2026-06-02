@@ -103,7 +103,7 @@
                 const { MSG } = window.PIP_CONSTANTS || {};
                 if (msg.type === MSG?.PIP_ACTIVATED || msg.type === MSG?.PIP_SESSION_STARTED) {
                     syncLocalPipState(true);
-                } else if (msg.type === MSG?.HIDE_VOLUME_PANEL || msg.type === MSG?.PIP_DEACTIVATED) {
+                } else if (msg.type === MSG?.PIP_DEACTIVATED) {
                     if (isRecentPipNavigation()) return;
                     syncLocalPipState(false);
                 }

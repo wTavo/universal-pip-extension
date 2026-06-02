@@ -15,7 +15,8 @@
         EXIT_PIP: 'EXIT_PIP',
         FOCUS_PIP: 'FOCUS_PIP',
         SEEK: 'SEEK',
-        PAUSE: 'PAUSE'
+        PAUSE: 'PAUSE',
+        SKIP_AD: 'SKIP_AD'
     };
 
     let cachedActiveVideo = null;
@@ -65,6 +66,12 @@
 
         if (_navTimer) clearTimeout(_navTimer);
         _navTimer = setTimeout(clearNavigation, 800);
+    }
+
+    // Silently refreshes the ghost-monitor suppression window without any
+    // navigation side-effects (no PIP_NAVIGATING event, no SIGNAL_NAVIGATION to background).
+    function touchNavigation() {
+        lastNavigationTime = Date.now();
     }
 
     function signalInteraction() {
@@ -117,6 +124,11 @@
                 : (!pip.isConnected || pip.readyState === 0);
 
             if (isGhost) {
+                const recentNavMs = Date.now() - lastNavigationTime;
+                if (recentNavMs < 5000) {
+                    _ghostStartedAt = 0;
+                    return;
+                }
                 if (!_ghostStartedAt) _ghostStartedAt = Date.now();
                 const ghostElapsedMs = Date.now() - _ghostStartedAt;
                 if (ghostElapsedMs >= GHOST_PIP_CLOSE_AFTER_SECONDS * 1000) {
@@ -941,6 +953,106 @@
         };
     }
 
+    function getVideoDimensions(video, { maxWidth = 640, maxHeight = 640 } = {}) {
+        if (!video || !video.videoWidth || !video.videoHeight) {
+            return { width: 480, height: 270 };
+        }
+
+        const ratio = video.videoWidth / video.videoHeight;
+        let width, height;
+
+        if (ratio >= 1) {
+            // Landscape / square
+            width = Math.min(maxWidth, 480);
+            height = Math.round(width / ratio);
+        } else {
+            // Portrait / vertical
+            height = Math.min(maxHeight, 480);
+            width = Math.round(height * ratio);
+        }
+
+        return { width, height };
+    }
+
+    function resizeDocumentPipToVideo(pipWin, video, { maxWidth = 640, maxHeight = 640 } = {}) {
+        if (!pipWin || pipWin.closed || !video) return;
+        if (!video.videoWidth || !video.videoHeight) return;
+
+        const { width, height } = getVideoDimensions(video, { maxWidth, maxHeight });
+
+        try {
+            // Compensate for the browser window chrome (title bar, borders) so the
+            // inner page area matches the video aspect ratio exactly.
+            const frameW = (pipWin.outerWidth && pipWin.innerWidth)
+                ? pipWin.outerWidth - pipWin.innerWidth : 0;
+            const frameH = (pipWin.outerHeight && pipWin.innerHeight)
+                ? pipWin.outerHeight - pipWin.innerHeight : 30; // ~30 px fallback for title bar
+
+            pipWin.resizeTo(width + frameW, height + frameH);
+
+            // If outerHeight === innerHeight the browser hasn't computed window chrome yet
+            // (happens when called synchronously right after requestWindow). Retry once on
+            // the next frame when measurements will be accurate.
+            if (pipWin.outerHeight === pipWin.innerHeight) {
+                pipWin.requestAnimationFrame(() => {
+                    if (!pipWin.closed) {
+                        resizeDocumentPipToVideo(pipWin, video, { maxWidth, maxHeight });
+                    }
+                });
+            }
+        } catch (e) {
+            // Only warn on actual programmatic failures; suppress expected browser-enforced
+            // user activation security warnings to prevent console pollution.
+            if (!/user activation|user gesture/i.test(e.message)) {
+                console.warn('[PiP] resizeDocumentPipToVideo failed:', e.message);
+            }
+        }
+    }
+
+    function switchDocumentPipVideo(pipState, newVideo, {
+        addVideoListeners,
+        removeVideoListeners,
+        restoreVideo,
+        renderUI
+    } = {}) {
+        if (!pipState.win || pipState.win.closed || !newVideo) return;
+        if (newVideo === pipState.video) return;
+
+        // 1. Detach resize listeners from the old video
+        if (pipState.resizeListener && pipState.video) {
+            pipState.video.removeEventListener('resize', pipState.resizeListener);
+            pipState.video.removeEventListener('loadedmetadata', pipState.resizeListener);
+        }
+        if (typeof removeVideoListeners === 'function' && pipState.video) {
+            removeVideoListeners(pipState.video);
+        }
+
+        // 2. Restore the old video to its original DOM position
+        if (typeof restoreVideo === 'function') restoreVideo();
+
+        // 3. Insert a placeholder and move the new video into the PiP window
+        const placeholder = document.createComment('unip-document-pip-placeholder');
+        newVideo.parentNode?.insertBefore(placeholder, newVideo);
+        pipState.placeholder = placeholder;
+        pipState.video = newVideo;
+
+        if (typeof addVideoListeners === 'function') addVideoListeners(newVideo);
+
+        // 4. Re-attach the resize listener to the new video and resize the window
+        const onResize = () => resizeDocumentPipToVideo(pipState.win, newVideo);
+        pipState.resizeListener = onResize;
+
+        if (newVideo.videoWidth && newVideo.videoHeight) {
+            onResize();
+        } else {
+            newVideo.addEventListener('loadedmetadata', onResize, { once: true });
+        }
+        newVideo.addEventListener('resize', onResize);
+
+        // 5. Re-render the platform-specific PiP UI
+        if (typeof renderUI === 'function') renderUI(newVideo);
+    }
+
     window.BridgeUtils = {
         ACTIONS,
         createBaseBridge,
@@ -951,6 +1063,7 @@
         enableFastVideoSwitching,
         enableAntiPause,
         signalNavigation,
+        touchNavigation,
         signalInteraction,
         clearNavigation,
         isNavigating,
@@ -963,7 +1076,10 @@
         handleSetVolume,
         detectIsLive,
         createMonitorState,
-        _refreshActiveVideo: refreshActiveVideo
+        _refreshActiveVideo: refreshActiveVideo,
+        getVideoDimensions,
+        resizeDocumentPipToVideo,
+        switchDocumentPipVideo
     };
 
 })();

@@ -87,9 +87,7 @@
         if (recentPipNavigation && currentSupportsNavigation && supportsNavigation === false) {
             supportsNavigation = undefined;
         }
-        if (recentPipNavigation && isAd === true) {
-            isAd = undefined;
-        }
+        // Note: isAd is NOT suppressed during navigation — the very next Reel can be an ad
 
         if (typeof liked === 'boolean') currentLiked = liked;
         if (typeof favorited === 'boolean') currentFavorited = favorited;

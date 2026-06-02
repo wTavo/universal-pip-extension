@@ -202,8 +202,6 @@
                 log.error('Error exiting PiP:', error);
             }
         }
-
-        window.PiPUtils?.safeSendMessage({ type: 'PIP_DEACTIVATED' });
     }
 
     // Detectar cuando se sale del PiP
@@ -211,10 +209,6 @@
         pipActive = false;
         const pipBtn = document.getElementById("primePipBtn");
         if (pipBtn) pipBtn.innerHTML = window.PiPFloatingButton.getInactiveIcon();
-
-        window.PiPUtils?.safeSendMessage({
-            type: 'PIP_DEACTIVATED'
-        });
     });
 
     // Seek buffering to prevent player crashes on rapid clicks

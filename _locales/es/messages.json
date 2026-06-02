@@ -74,6 +74,12 @@
     "modalSettingsTitle": {
         "message": "Configuración"
     },
+    "modalPipWindowModeLabel": {
+        "message": "Document PiP"
+    },
+    "modalPipWindowModeDesc": {
+        "message": "Usar ventana PiP personalizada en YouTube"
+    },
     "modalDebugModeLabel": {
         "message": "Modo de depuración"
     },

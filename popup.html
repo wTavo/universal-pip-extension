@@ -115,6 +115,16 @@
                     <div class="modal-title" data-i18n="modalSettingsTitle">Settings</div>
                     <div class="setting-row">
                         <div class="setting-info">
+                            <span class="setting-label" data-i18n="modalPipWindowModeLabel">Document PiP</span>
+                            <span class="setting-desc" data-i18n="modalPipWindowModeDesc">Use custom YouTube PiP window</span>
+                        </div>
+                        <label class="scope-toggle-label compact">
+                            <input type="checkbox" id="pip-window-mode-toggle" class="scope-toggle-input">
+                            <span class="scope-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="setting-row">
+                        <div class="setting-info">
                             <span class="setting-label" data-i18n="modalDebugModeLabel">Debug Mode</span>
                             <span class="setting-desc" data-i18n="modalDebugModeDesc">Show logs in browser
                                 console</span>
@@ -182,6 +192,7 @@
             </button>
         </footer>
         <script src="utils/constants.js"></script>
+        <script src="utils/pip-mode-utils.js"></script>
         <script src="utils/logger.js"></script>
         <script src="utils/i18n.js"></script>
         <script src="popup.js"></script>

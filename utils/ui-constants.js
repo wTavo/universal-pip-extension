@@ -35,6 +35,17 @@
         },
         arrowRight: { viewBox: "0 0 24 24", children: [{ tag: "path", attrs: { d: "M11.5 8c-4.65 0-8.58 3.03-9.96 7.22l2.37.78c1.05-3.19 4.05-5.5 7.59-5.5 1.95 0 3.73.72 5.12 1.88L13 16h9V7l-3.6 3.6c-1.85-1.61-4.25-2.6-6.9-2.6z" } }] },
         arrowLeft: { viewBox: "0 0 24 24", children: [{ tag: "path", attrs: { d: "M12.5 8c-2.65 0-5.05.99-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z" } }] },
+        skipAd: {
+            viewBox: "0 0 24 24",
+            children: [
+                { tag: "path", attrs: { d: "M6 18V6l8.5 6z" } },
+                { tag: "path", attrs: { d: "M15.5 6h2v12h-2z" } }
+            ]
+        },
+        adWait: {
+            viewBox: "0 0 24 24",
+            children: [{ tag: "path", attrs: { d: "M6 2v6h.01L6 8.01 10 12l-4 4 .01.01H6V22h12v-5.99h-.01L18 16l-4-4 4-3.99-.01-.01H18V2H6zm10 14.5V20H8v-3.5l4-4 4 4zm-4-5l-4-4V4h8v3.5l-4 4z" } }]
+        },
         up: { viewBox: "0 0 24 24", children: [{ tag: "path", attrs: { fill: "currentColor", d: "M7.41 15.41L12 10.83l4.59 4.58L18 14l-6-6-6 6z" } }] },
         down: { viewBox: "0 0 24 24", children: [{ tag: "path", attrs: { fill: "currentColor", d: "M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6z" } }] },
         play: { viewBox: "0 0 24 24", children: [{ tag: "path", attrs: { d: "M8 5v14l11-7z" } }] },

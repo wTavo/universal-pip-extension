@@ -26,11 +26,8 @@
     window.PiPUtils.PIP_UI_ZINDEX = 2147483647;
 
     Object.assign(window.PiPUtils, {
-        notifyPipClosed: function ({ force = true, hidePanel = false } = {}) {
+        notifyPipClosed: function ({ force = true } = {}) {
             window.PiPUtils.safeSendMessage({ type: 'PIP_DEACTIVATED', force });
-            if (hidePanel) {
-                window.PiPUtils.safeSendMessage({ type: 'HIDE_VOLUME_PANEL' });
-            }
             if (window.PiPFloatingButton?._refreshManagedIcons) {
                 window.PiPFloatingButton._isPipActiveGlobal = false;
                 window.PiPFloatingButton._refreshManagedIcons(false);
@@ -404,15 +401,28 @@
 
             document.addEventListener('enterpictureinpicture', (e) => {
                 const video = e.target;
+                const isSelector = !!(window.__pipExt && window.__pipExt.isSelector) || (video && video.hasAttribute('data-pip-is-selector'));
+                const isTriggered = !!(window.__pipExt && window.__pipExt.isTriggered) || (video && video.hasAttribute('data-pip-is-triggered'));
                 let metadata = {
                     volume: Math.round(video.volume * 100),
                     muted: video.muted,
-                    playing: !video.paused
+                    playing: !video.paused,
+                    platform: 'generic',
+                    pipMode: isSelector ? 'manual' : 'main',
+                    isSelectorMode: isSelector,
+                    isExtensionTriggered: isTriggered
                 };
 
                 if (window.PiPUtils._metadataCollector) {
                     const extra = window.PiPUtils._metadataCollector(video);
                     Object.assign(metadata, extra);
+                    if (isTriggered) {
+                        metadata.isExtensionTriggered = true;
+                    }
+                    if (isSelector) {
+                        metadata.isSelectorMode = true;
+                        metadata.pipMode = 'manual';
+                    }
                 }
 
                 window.PiPUtils.safeSendMessage({
@@ -426,27 +436,29 @@
 
             document.addEventListener('leavepictureinpicture', (e) => {
                 const video = e.target;
-                setTimeout(() => {
-                    if (document.pictureInPictureElement) {
-                        log.info('Video swapped - suppressing PiP exit.');
-                        return;
-                    }
+                
+                const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
+                                   document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
+                const recentlyNavigated = Date.now() - (window.PiPUtils._lastPipNavigationAt || 0) < RECENT_PIP_NAVIGATION_MS;
 
-                    const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
-                                       document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
-                    const recentlyNavigated = Date.now() - (window.PiPUtils._lastPipNavigationAt || 0) < RECENT_PIP_NAVIGATION_MS;
+                if (isNavigating || recentlyNavigated) {
+                    log.info('Natural navigation exit detected - delaying PiP deactivation.');
+                    setTimeout(() => {
+                        if (document.pictureInPictureElement) {
+                            log.info('Video swapped - suppressing PiP exit.');
+                            return;
+                        }
+                        log.info('PiP did not recover after navigation. Cleaning up.');
+                        window.PiPUtils.notifyPipClosed({ force: false });
+                    }, 1500); // 1.5s grace to allow the new video to enter PiP
+                    return;
+                }
 
-                    if (isNavigating || recentlyNavigated) {
-                        log.info('Natural navigation exit detected - suppressing PiP deactivation signal.');
-                        return;
-                    }
-
-                    const isManualExit = video && video.isConnected;
-                    
-                    window.PiPUtils.notifyPipClosed({ force: isManualExit, hidePanel: false });
-
-                    if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
-                }, 700);
+                // If not navigating, it's an immediate manual close (e.g. exit button or native 'x')
+                log.info('Direct manual exit detected - cleaning up immediately.');
+                const isManualExit = video && video.isConnected;
+                window.PiPUtils.notifyPipClosed({ force: isManualExit });
+                if (window.PiPUtils._onExit) window.PiPUtils._onExit(video);
             }, true);
         },
 
@@ -466,7 +478,9 @@
                     sendResponse({ success: true });
                 } else if (message.type === 'VALIDATE_PIP_STATUS') {
                     const video = document.pictureInPictureElement;
-                    let isActive = !!video;
+                    const documentPipActive = typeof window.PiPUtils._documentPipIsActive === 'function' &&
+                        window.PiPUtils._documentPipIsActive();
+                    let isActive = !!video || !!documentPipActive;
                     
                     const isNavigating = (window.BridgeUtils && typeof window.BridgeUtils.isNavigating === 'function' && window.BridgeUtils.isNavigating()) ||
                                        document.documentElement.hasAttribute(CONSTANTS.NAVIGATING_ATTR);
@@ -478,7 +492,11 @@
                     let metadata = {};
                     if (isActive && window.PiPUtils._metadataCollector) {
                         try {
-                            metadata = window.PiPUtils._metadataCollector(video || document.querySelector('video'));
+                            metadata = documentPipActive && window.PiPUtils._documentPipMetadata
+                                ? { ...window.PiPUtils._documentPipMetadata }
+                                : window.PiPUtils._metadataCollector(
+                                    video || window.PiPUtils._documentPipVideo || document.querySelector('video')
+                                );
                         } catch (e) { }
                     }
                     sendResponse({ success: true, isActive: isActive, metadata: metadata });
@@ -498,7 +516,8 @@
                 return;
             }
 
-            if (document.querySelector(`script[src*="${bridgeFileName}"]`)) return;
+            const bridgeFiles = Array.isArray(bridgeFileName) ? bridgeFileName : [bridgeFileName];
+            if (bridgeFiles.every(file => document.querySelector(`script[src*="${file}"]`))) return;
 
             const utilsScript = document.createElement('script');
             try {
@@ -511,8 +530,10 @@
             let failSafeTimeout = null;
             const cleanup = () => {
                 if (utilsScript.parentNode) utilsScript.remove();
-                const bridgeScript = document.querySelector(`script[src*="${bridgeFileName}"]`);
-                if (bridgeScript) bridgeScript.remove();
+                bridgeFiles.forEach(file => {
+                    const bridgeScript = document.querySelector(`script[src*="${file}"]`);
+                    if (bridgeScript) bridgeScript.remove();
+                });
                 if (failSafeTimeout) clearTimeout(failSafeTimeout);
             };
 
@@ -522,23 +543,31 @@
             }, CONSTANTS.INJECTION_TIMEOUT);
 
             utilsScript.onload = () => {
-                const bridgeScript = document.createElement('script');
-                try {
-                    bridgeScript.src = _runtime.getURL(bridgeFileName);
-                } catch (e) {
-                    log.info(`getURL failed for ${bridgeFileName}`, e);
-                    cleanup();
-                    return;
-                }
-                bridgeScript.onload = function () {
-                    log.info(`Successfully injected ${bridgeFileName}`);
-                    cleanup();
+                let index = 0;
+                const loadNextBridge = () => {
+                    const file = bridgeFiles[index++];
+                    if (!file) {
+                        log.info(`Successfully injected ${bridgeFiles.join(', ')}`);
+                        cleanup();
+                        return;
+                    }
+
+                    const bridgeScript = document.createElement('script');
+                    try {
+                        bridgeScript.src = _runtime.getURL(file);
+                    } catch (e) {
+                        log.info(`getURL failed for ${file}`, e);
+                        cleanup();
+                        return;
+                    }
+                    bridgeScript.onload = loadNextBridge;
+                    bridgeScript.onerror = function () {
+                        log.info(`Failed to load bridge script: ${file} (CSP or 404)`);
+                        cleanup();
+                    };
+                    (document.head || document.documentElement).appendChild(bridgeScript);
                 };
-                bridgeScript.onerror = function () {
-                    log.info(`Failed to load bridge script: ${bridgeFileName} (CSP or 404)`);
-                    cleanup();
-                };
-                (document.head || document.documentElement).appendChild(bridgeScript);
+                loadNextBridge();
             };
 
             utilsScript.onerror = function () {
@@ -631,7 +660,7 @@
 
     // Relay for the auto-close safety timer from the injected bridge
     window.addEventListener('PIP_AUTO_CLOSED', () => {
-        window.PiPUtils.notifyPipClosed({ force: true, hidePanel: true });
+        window.PiPUtils.notifyPipClosed({ force: true });
     });
 
     /**

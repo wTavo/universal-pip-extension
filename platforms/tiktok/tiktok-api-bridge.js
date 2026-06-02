@@ -267,6 +267,7 @@
             // Keep "live" scoped to actual TikTok restrictions (real live streams / ads).
             // Transitional swaps between feed videos should not collapse the control panel UI.
             state.isTikTokLive = (state.isLive || isAd);
+            state.isAd = isAd; // Expose separately so the panel can show an ad indicator
             state.hasFavorite = (state.isLive || isAd)
                 ? false
                 : (isUserDrivenTransition ? session.lastStableHasFavorite : !!favBtn);

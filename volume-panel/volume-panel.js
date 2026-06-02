@@ -20,6 +20,7 @@
         toggleButton: null,
         isPanelVisible: false,
         isPipActive: false,
+        isSourceTab: false, // True once this tab had an active PiP element (i.e. it's the PiP origin tab)
         slider: null, // Cached DOM reference
         isUserDraggingVolume: false,
         lastVolumeSent: 0,
@@ -98,7 +99,7 @@
         const s = stateObj || STATE.pipState || {};
         const isGlobalHidden = s.uiVisible === false;
         const isOriginHidden = s.originDomain && s.domainExceptions && s.domainExceptions[s.originDomain] === false;
-        return STATE.isNavExpanded && !isGlobalHidden && !isOriginHidden;
+        return (STATE.isNavExpanded || !!s.isAd) && !isGlobalHidden && !isOriginHidden;
     }
 
     function mergePipState(partial = {}) {
@@ -160,7 +161,7 @@
 
         STATE._contentReadyRaf = requestAnimationFrame(() => {
             STATE._contentReadyRaf = null;
-            if (STATE._destroyed || !STATE.isPipActive || STATE.contentControlsReady) return;
+            if (STATE._destroyed || STATE.contentControlsReady) return;
             markContentControlsReady();
             showToggleButton(STATE.pipState || state);
         });
@@ -279,6 +280,8 @@
 
         const likeBtn = targetDoc.getElementById('globalPipNavContainer_like');
         if (likeBtn) likeBtn.style.display = (isAd && isShorts) ? 'none' : 'flex';
+
+
     }
 
     function applyInstagramDynamicControls(source = {}) {
@@ -321,6 +324,11 @@
     }
 
     function applyPlatformDynamicControls(source = {}) {
+        const skipAdBtn = targetDoc.getElementById('pipSkipAdBtn');
+        if (skipAdBtn) {
+            window.PiPVolumePanelUI.updateSkipAdStatus(skipAdBtn, !!source.isAd, !!source.canSkipAd);
+        }
+
         if (source.platform === 'tiktok') {
             applyTikTokDynamicControls(source);
         } else if (source.platform === 'youtube') {
@@ -475,13 +483,17 @@
         },
         SYNC_NAV_SUPPORT_UI: (m, r) => {
             markContentControlsReady();
-            const state = mergePipState({ supportsNavigation: !!m.supportsNavigation });
+            const updates = { supportsNavigation: !!m.supportsNavigation };
+            if (m.isShorts !== undefined) updates.isShorts = !!m.isShorts;
+            const state = mergePipState(updates);
             showToggleButton(state);
             r({ success: true });
         },
         SYNC_AD_UI: (m, r) => {
             markContentControlsReady();
-            const state = mergePipState({ isAd: !!m.isAd });
+            const updates = { isAd: !!m.isAd };
+            if (m.canSkipAd !== undefined) updates.canSkipAd = !!m.canSkipAd;
+            const state = mergePipState(updates);
             applyPlatformDynamicControls(state);
             r({ success: true });
         },
@@ -811,6 +823,22 @@
     }
 
     function showToggleButton(state = {}) {
+        // Universal guard: never show the panel if the PiP session is not active.
+        // Use the state reported by the background (works across all tabs, not just the source tab).
+        // Also do a direct local check: if this IS the source tab and there's no active PiP element,
+        // destroy immediately regardless of what the background thinks.
+        if (document.pictureInPictureElement !== null) {
+            STATE.isSourceTab = true;
+        }
+        const localPipGone = STATE.isSourceTab && document.pictureInPictureElement === null;
+        const sessionEnded = state.active === false;
+        const isDocPip = state.pipWindowMode === 'document';
+        
+        if (localPipGone || sessionEnded || isDocPip) {
+            destroyUI();
+            return;
+        }
+
         STATE._destroyed = false;
         STATE.pipState = state;
         STATE.isPipActive = true;
@@ -1032,6 +1060,15 @@
                     if (state.platform !== 'instagram') favBtn.remove();
                 }
 
+                const skipAdBtn = window.PiPVolumePanelUI.buildSkipAdBtn(targetDoc);
+                navUi.wrapper.appendChild(skipAdBtn);
+                skipAdBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    window.PiPVolumePanelLayout.startAutoHide(hidePanel);
+                    window.PiPVolumePanelLayout.animateClick(skipAdBtn);
+                    UTILS.sendMsg({ type: 'SKIP_AD' });
+                });
+
                 targetDoc.body.appendChild(navContainer);
                 applyPlatformDynamicControls(state);
                 requestAnimationFrame(() => updateNavPosition());
@@ -1136,6 +1173,7 @@
         STATE._destroyed = true;
         STATE.isPipActive = false;
         STATE.isPanelVisible = false;
+        STATE.isSourceTab = false; // Reset so this tab can be used as a non-source tab in a future session
         resetContentControls();
         STATE.tiktokManualNavUiGraceUntil = 0;
 
@@ -1203,5 +1241,13 @@
             destroyUI();
         }
     });
+    // Proactive initial sync to retrieve PiP state and render the panel if active
+    if (window.PiPUtils?.safeSendMessage) {
+        window.PiPUtils.safeSendMessage({ type: "GET_PIP_STATE" }, (res) => {
+            if (res?.state?.active && res.effectiveUiVisible) {
+                showToggleButton(res.state);
+            }
+        });
+    }
 
 })();
